@@ -102,7 +102,7 @@ if (not $opts{g}){
     close $TEMP;
     informUser("Attempting to retrieve target files using ascp...\n");
     $ENV{ASPERA_SCP_PASS} = $password;
-    system("$opts{a} -P 33001 -O 33001 -l 500M --host edgen-dt.rdf.ac.uk  --user $opts{u} --file-list $temp  --mode=recv $opts{g}");
+    system("$opts{a} -P 33001 -O 33001 -l 500M --host $opts{s}  --user $opts{u} --file-list $temp  --mode=recv $opts{g}");
     checkExit($?);
 }
 
