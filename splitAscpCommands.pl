@@ -76,6 +76,10 @@ EOT
 
 usage("-d/--directory option is required") if not $opts{d};
 
+if ($opts{t} < 1){
+    $opts{t} = 1;
+}
+
 my $password = read_password
 (
     "Enter password for $opts{u}: "
@@ -95,6 +99,7 @@ if ( $opts{q} ){
 
 #####################################################################
 sub makeAndSubmitQsub{
+    my @wait_ids = (); 
     for (my $i = 0; $i < @sub_dirs; $i++){
         my $script = "$opts{p}.$i.sh";
         open (my $SCRIPT, ">", $script) or die "Can't open qsub script $script for writing: $!\n";
@@ -115,9 +120,20 @@ find $sub_dirs[$i] -name '*md5' -exec md5sum -c {} >> $sub_dirs[$i]/md5_checks.t
 
 EOT
 ;
-    close $SCRIPT;
-    system("qsub $script"); 
-    checkExit($?);
+        close $SCRIPT;
+        my $wait_string = ''; 
+        if ($i >= $opts{t} and @wait_ids > $i - $opts{t}){
+            $wait_string = "-hold_jid $wait_ids[$i - $opts{t}]";
+        }
+        my $cmd = "qsub $wait_string $script";
+        informUser("Executing: $cmd");  
+        my $output = `$cmd`; 
+        checkExit($?);
+        if ($output =~ /Your job (\d+) .* has been submitted/){
+            push @wait_ids, $1;
+        }else{
+            die "Error parsing qsub output for '$cmd'\nOutput was: $output";
+        }
     }
 }
 #####################################################################
