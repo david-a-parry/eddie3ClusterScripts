@@ -5,6 +5,7 @@ use threads;
 use POSIX qw/strftime/;
 use Term::ReadPassword;
 use File::Temp qw/ tempfile / ;
+use File::Path qw( make_path );
 use Getopt::Long;
 use Data::Dumper;
 my @file_regexes = ();
@@ -16,6 +17,7 @@ my %opts =
     a => "$ENV{HOME}/.aspera/connect/bin/ascp",
     t => 8,
     p => "get",
+    r => 24,
 );
 GetOptions
 (
@@ -27,6 +29,7 @@ GetOptions
     "p|prefix=s",
     "a|ascp=s",
     "q|qsub",
+    "r|runtime=i",
     "h|help",
 ) or usage("Syntax error");
 usage() if $opts{h};
@@ -49,6 +52,8 @@ Options:
 
     -d,--directory STRING
         Name of directory to retrieve at the site. Required.
+        The directory structure will be recreated from the current working 
+        directory if not already present.
 
     -t,--threads INT
         Number of threads to use
@@ -77,6 +82,9 @@ my $password = read_password
 ); 
 
 my @sub_dirs = processDir($opts{d});
+if (not -d "./$opts{d}"){
+    make_path("./$opts{d}"); 
+}
 $ENV{ASPERA_SCP_PASS} = $password;
 $opts{s} =~ s/https:\/\///;
 if ( $opts{q} ){
@@ -93,15 +101,17 @@ sub makeAndSubmitQsub{
         print $SCRIPT <<EOT
 #\$ -M david.parry\@igmm.ed.ac.uk
 #\$ -m abe
+#\$ -e $script.stderr
+#\$ -o $script.stdout
 #\$ -cwd
 #\$ -V
-#\$ -l h_rt=124:00:00
+#\$ -l h_rt=$opts{r}:00:00
 # Configure modules
 . /etc/profile.d/modules.sh
 
-$opts{a} -k 1 -P 33001 -O 33001 -l 500M dparry\@edgen-dt.rdf.ac.uk:$sub_dirs[$i] ./ 
+$opts{a} -k 1 -P 33001 -O 33001 -l 500M dparry\@edgen-dt.rdf.ac.uk:$sub_dirs[$i] ./$opts{d}
 
-find $sub_dirs[$i] -name '*md5' -exec md5sum -c >> $sub_dirs[$i]/md5_checks.txt
+find $sub_dirs[$i] -name '*md5' -exec md5sum -c {} >> $sub_dirs[$i]/md5_checks.txt \\+
 
 EOT
 ;
