@@ -1,11 +1,12 @@
 #!/usr/bin/perl
 use warnings;
 use strict;
-use threads;
+#use threads;
 use POSIX qw/strftime/;
 use Term::ReadPassword;
 use File::Temp qw/ tempfile / ;
 use File::Path qw( make_path );
+use File::Temp qw/ tempfile /;
 use Getopt::Long;
 use Data::Dumper;
 my @file_regexes = ();
@@ -94,7 +95,7 @@ $opts{s} =~ s/https:\/\///;
 if ( $opts{q} ){
     makeAndSubmitQsub();
 }else{
-    getWithThreads();
+    getWithParallel();
 }
 
 #####################################################################
@@ -137,7 +138,19 @@ EOT
     }
 }
 #####################################################################
-sub getWithThreads{
+sub getWithParallel{
+    my ($FH, $filename) = tempfile();
+    my @parstring = "";
+    foreach my $d (@sub_dirs){
+        print $FH  "$opts{u}\@$opts{s}:$d $d\n";
+    }
+    close $FH;
+    my $cmd = "parallel --colsep ' ' -j $opts{t} $opts{a} -P 33001 -O 33001 -k 1 -l 500M :::: $filename ";
+    informUser("Attempting command:\n$cmd\n"); 
+    system($cmd);
+    checkExit($?);
+
+=cut
     for (my $i = 0; $i < @sub_dirs;){
         for (my $j = 0; $j < $opts{t}; $j++){
             last if $i >= @sub_dirs;
@@ -153,6 +166,7 @@ sub getWithThreads{
             sleep 10;
         }
     }
+=cut
 }
 
 #####################################################################
