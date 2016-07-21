@@ -7,6 +7,7 @@ use Term::ReadPassword;
 use File::Temp qw/ tempfile / ;
 use File::Path qw( make_path );
 use File::Temp qw/ tempfile /;
+use File::Basename;
 use Getopt::Long;
 use Data::Dumper;
 my @file_regexes = ();
@@ -31,6 +32,7 @@ GetOptions
     "a|ascp=s",
     "q|qsub",
     "r|runtime=i",
+    "tmux",
     "h|help",
 ) or usage("Syntax error");
 usage() if $opts{h};
@@ -65,6 +67,9 @@ Options:
     -a,--ascp FILE
         Location of ascp binary. Default = ~/.aspera/connect/bin/ascp
     
+    --tmux
+        Create tmux terminals for each command
+
     -h,--help
         Show this message and exit
 
@@ -126,10 +131,12 @@ sub getWithParallel{
     my ($FH, $filename) = tempfile();
     my @parstring = "";
     foreach my $d (@sub_dirs){
-        print $FH  "$opts{u}\@$opts{s}:$d $d\n";
+        print $FH  "$opts{u}\@$opts{s}:$d ./$opts{d}\n";
     }
     close $FH;
-    my $cmd = "parallel --colsep ' ' -j $opts{t} $opts{a} -P 33001 -O 33001 -k 1 -l 500M :::: $filename ";
+    my $cmd = "parallel ";
+    $cmd .= "--tmux " if $opts{tmux};
+    $cmd .= "--colsep ' ' -j $opts{t} $opts{a} -P 33001 -O 33001 -k 1 -l 500M :::: $filename ";
     informUser("Attempting command:\n$cmd\n"); 
     system($cmd);
     checkExit($?);
