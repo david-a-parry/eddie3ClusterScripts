@@ -35,7 +35,7 @@ sub outputJobInfo{
     my $total_length = 0;
     map { $total_length += $widths[$_] } 0..$#widths;
     printf $format, @info;
-    print "-" x $total_length . "-" x @info . "\n";
+    print "-" x $total_length . "-" x $#info . "\n";
     foreach my $j (@job_strings){
         { 
             no warnings 'uninitialized';
