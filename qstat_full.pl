@@ -31,6 +31,7 @@ outputJobInfo();
 
 ##################################################
 sub outputJobInfo{
+    return if not @job_strings;
     my $format = join(' ', map { "%-${_}s" } @widths) . "\n";
     my $total_length = 0;
     map { $total_length += $widths[$_] } 0..$#widths;
