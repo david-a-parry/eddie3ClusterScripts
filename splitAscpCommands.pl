@@ -108,7 +108,9 @@ sub makeAndSubmitQsub{
     my @wait_ids = (); 
     for (my $i = 0; $i < @sub_dirs; $i++){
         my $script = "$opts{p}.$i.sh";
+        my $md5script = "$opts{p}.md5check.$i.sh";
         open (my $SCRIPT, ">", $script) or die "Can't open qsub script $script for writing: $!\n";
+        open (my $MD5, ">", $md5script) or die "Can't open qsub script $md5script for writing: $!\n";
         print $SCRIPT <<EOT
 #\$ -M david.parry\@igmm.ed.ac.uk
 #\$ -m abe
@@ -122,17 +124,33 @@ sub makeAndSubmitQsub{
 
 $opts{a} -k 1 -P 33001 -O 33001 -l 500M dparry\@edgen-dt.rdf.ac.uk:$sub_dirs[$i] ./$opts{d}
 
-find $sub_dirs[$i] -name '*md5' -exec md5sum -c {} >> $sub_dirs[$i]/md5_checks.txt \\+
-
 EOT
 ;
         close $SCRIPT;
+        print $MD5 <<EOT
+#\$ -M david.parry\@igmm.ed.ac.uk
+#\$ -m abe
+#\$ -e $md5script.stderr
+#\$ -o $md5script.stdout
+#\$ -cwd
+#\$ -V
+#\$ -l h_rt=$opts{r}:00:00
+# Configure modules
+. /etc/profile.d/modules.sh
+
+cd $sub_dirs[$i] 
+
+ls *md5 | xargs -n 1 md5sum -c {} >> md5_checks.txt \\+
+
+EOT
+;
+        close $MD5;
         my $wait_string = ''; 
         if ($i >= $opts{t} and @wait_ids > $i - $opts{t}){
             $wait_string = "-hold_jid $wait_ids[$i - $opts{t}]";
         }
         my $cmd = "qsub $wait_string $script";
-        informUser("Executing: $cmd");  
+        informUser("Executing: $cmd\n");  
         my $output = `$cmd`; 
         checkExit($?);
         if ($output =~ /Your job (\d+) .* has been submitted/){
@@ -140,6 +158,10 @@ EOT
         }else{
             die "Error parsing qsub output for '$cmd'\nOutput was: $output";
         }
+        $cmd = "qsub -hold_jid $wait_ids[$i] $md5script";
+        informUser("Executing: $cmd\n");  
+        $output = `$cmd`; 
+        checkExit($?);
     }
 }
 #####################################################################
