@@ -150,7 +150,7 @@ sub usage{
     print STDERR "\n$msg\n" if $msg;
     print STDERR <<EOT
 
-USAGE: $0 -d <dict> -o <output_dir> -g gvcf1 [gvcf2 ... gvcfN]
+USAGE: $0 -d <dict> -o <output_dir> -i gvcf1 [gvcf2 ... gvcfN]
 
 OPTIONS:
 
