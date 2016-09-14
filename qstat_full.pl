@@ -2,6 +2,17 @@
 
 use strict;
 use warnings; 
+use Getopt::Long;
+
+my %opts = ();
+GetOptions
+(
+    \%opts,
+    'h|help',
+    'r|running',
+) or usage("syntax error!");
+usage() if $opts{h};
+
 
 my @qstat = split("\n", `qstat -r`); 
 exit if not @qstat;
@@ -65,7 +76,9 @@ sub outputJobInfo{
     printf $format, @info;
     print "-" x $total_length . "-" x $#info . "\n";
     foreach my $j (@job_strings){
-        printf $format, @$j;
+        if (not $opts{r} or ( $opts{r} and $j->[4] =~ /r/) ){
+            printf $format, @$j;
+        }
     }
 }
 
@@ -77,3 +90,27 @@ sub getJobInfo{
     #print join("\t", @output) . "\n";
     push @job_strings, \@output;
 }
+
+
+##################################################
+sub usage{
+    my $msg = shift;
+    print STDERR "\n$msg\n" if $msg;
+    print STDERR <<EOT
+
+    qstat_full.pl - prints qstat output including full name of job in columns
+
+    Options:
+
+        -h,--help
+            Show this message and exit
+        -r,--running
+            Show only jobs that are running
+
+    
+EOT
+    ;
+    exit 1 if $msg;
+    exit;
+}
+    
