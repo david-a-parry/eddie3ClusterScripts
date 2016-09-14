@@ -19,6 +19,8 @@ GetOptions
     \%opts,
     "r|runtime=s",
     "m|memory=s",
+    "p|parallel_environment=s",
+    "t|threads=i",
     "e|stderr=s",
     "o|stdout=s",
     "E|email=s",
@@ -34,6 +36,8 @@ my %head_opts =
 (
     r => "-l h_rt=",
     m => "-l h_vmem=",
+    p => "-pe ",
+    t => "-pe sharedmem ",
     E => "-M ",
     M => "-m ",
     e => "-e ",
@@ -83,6 +87,12 @@ Options:
     -m STRING --memory STRING
          Value for memory argument. Default = 1G
         
+    -p STRING --parallel_environment STRING
+         Value for parallel environment setting (e.g. 'sharedmem 8'). Default = none.
+        
+    -t INT --threads INT
+         Number of 'sharedmem' threads (e.g. -t 8 is a shortcut for '-p sharedmem 8'). Default = none.
+
     -e STRING --stderr STRING
          Output script STDERR to this file. Default = none
         
