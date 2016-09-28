@@ -24,6 +24,7 @@ GetOptions
     "a|ascp=s",
     "g|get=s",
     "f|files=s{,}",
+    "x|do_not_expand_path",
     "h|help",
 ) or usage("Syntax error");
 usage() if $opts{h};
@@ -64,6 +65,12 @@ Options:
         Will be created if it does not already exist. Existing files will be
         overwritten.
     
+    -x,--do_not_expand_path
+        Use this flag to place all files in the directory specified by the 
+        '--get' argument instead of creating paths to reflect the remote 
+        directory structure. May result in overwriting files with the same 
+        filename.
+
     -h,--help
         Show this message and exit
         
@@ -85,10 +92,16 @@ if($opts{g} and not -d $opts{g}){
 my @dirs =();
 my @files = ();
 
-my $password = read_password
-(
-    "Enter password for $opts{u}: "
-); 
+my $password = ''; 
+if ($ENV{ASPERA_SCP_PASS}){
+    $password =$ENV{ASPERA_SCP_PASS};
+}else{ 
+    $password = read_password
+    (
+        "Enter password for $opts{u}: "
+    );
+    $ENV{ASPERA_SCP_PASS} = $password;
+} 
 
 
 my %done_dirs = ();
@@ -98,11 +111,16 @@ if (not $opts{g}){
     print join("\n", @files) . "\n";
 }else{
     my ($TEMP, $temp) = tempfile();
-    print $TEMP join("\n", @files) . "\n"; 
+    if ($opts{x}){
+        print $TEMP join("\n", @files) . "\n"; 
+    }else{
+        print $TEMP map {"$_\n$opts{g}/$_\n"} @files;
+    }
     close $TEMP;
     informUser("Attempting to retrieve target files using ascp...\n");
-    $ENV{ASPERA_SCP_PASS} = $password;
-    system("$opts{a} -P 33001 -O 33001 -l 500M --host $opts{s}  --user $opts{u} --file-list $temp  --mode=recv $opts{g}");
+    my $f_arg = $opts{x} ? "--file-list" : "--file-pair-list";
+    $opts{s} =~ s/^http(s){0,1}:\/\///;
+    system("$opts{a} -P 33001 -O 33001 -l 500M --host $opts{s}  --user $opts{u} $f_arg $temp  --mode=recv $opts{g}");
     checkExit($?);
 }
 
