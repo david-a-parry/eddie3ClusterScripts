@@ -20,6 +20,7 @@ my %opts =
     t => 8,
     p => "get",
     r => 24,
+    f => \@file_regexes,
 );
 GetOptions
 (
@@ -28,11 +29,13 @@ GetOptions
     "t|threads=i",
     "u|user=s",
     "d|directory=s",
+    "f|files=s{,}",
     "p|prefix=s",
     "a|ascp=s",
     "q|qsub",
     "r|runtime=i",
     "tmux",
+    "y|dry_run",
     "h|help",
 ) or usage("Syntax error");
 usage() if $opts{h};
@@ -58,6 +61,13 @@ Options:
         The directory structure will be recreated from the current working 
         directory if not already present.
 
+    -f,--files PATTERN [PATTERN2 PATTERN3 ... ]
+        One or more tring or REGEX pattern for retrieving matching files. 
+        To retrieve bam files, their indexes and MD5s the REGEX 
+        ".+\.ba[im](\.md5)*" could be used.
+        Default = none (get whole directories).
+
+ 
     -t,--threads INT
         Number of threads to use
     
@@ -85,17 +95,26 @@ usage("-d/--directory option is required") if not $opts{d};
 if ($opts{t} < 1){
     $opts{t} = 1;
 }
+my $password = ''; 
+if ($ENV{ASPERA_SCP_PASS}){
+    $password =$ENV{ASPERA_SCP_PASS};
+}else{ 
+    $password = read_password
+    (
+        "Enter password for $opts{u}: "
+    );
+    $ENV{ASPERA_SCP_PASS} = $password;
+} 
 
-my $password = read_password
-(
-    "Enter password for $opts{u}: "
-); 
-
-my @sub_dirs = processDir($opts{d});
+my @files = ();
+my %done_dirs = ();
+processDir($opts{d});
+if (not @files){
+    die "No matching files or directories identified - nothing to do!\n";
+}
 if (not -d "./$opts{d}"){
     make_path("./$opts{d}"); 
 }
-$ENV{ASPERA_SCP_PASS} = $password;
 $opts{s} =~ s/https:\/\///;
 if ( $opts{q} ){
     makeAndSubmitQsub();
@@ -106,11 +125,13 @@ if ( $opts{q} ){
 #####################################################################
 sub makeAndSubmitQsub{
     my @wait_ids = (); 
-    for (my $i = 0; $i < @sub_dirs; $i++){
+    for (my $i = 0; $i < @files; $i++){
         my $script = "$opts{p}.$i.sh";
-        my $md5script = "$opts{p}.md5check.$i.sh";
         open (my $SCRIPT, ">", $script) or die "Can't open qsub script $script for writing: $!\n";
-        open (my $MD5, ">", $md5script) or die "Can't open qsub script $md5script for writing: $!\n";
+        my ($f, $d) = fileparse($files[$i]); 
+        if (not -d "./$d"){
+            make_path("./$d") or die "could not make path './$d': $!\n"; 
+        }
         print $SCRIPT <<EOT
 #\$ -M david.parry\@igmm.ed.ac.uk
 #\$ -m abe
@@ -122,74 +143,61 @@ sub makeAndSubmitQsub{
 # Configure modules
 . /etc/profile.d/modules.sh
 
-$opts{a} -k 1 -P 33001 -O 33001 -l 500M dparry\@edgen-dt.rdf.ac.uk:$sub_dirs[$i] ./$opts{d}
+$opts{a} -k 1 -P 33001 -O 33001 -l 500M dparry\@edgen-dt.rdf.ac.uk:$files[$i] ./$files[$i]
 
 EOT
 ;
         close $SCRIPT;
-        print $MD5 <<EOT
-#\$ -M david.parry\@igmm.ed.ac.uk
-#\$ -m abe
-#\$ -e $md5script.stderr
-#\$ -o $md5script.stdout
-#\$ -cwd
-#\$ -V
-#\$ -l h_rt=$opts{r}:00:00
-# Configure modules
-. /etc/profile.d/modules.sh
-
-cd $sub_dirs[$i] 
-
-ls *md5 | xargs -n 1 md5sum -c {} >> md5_checks.txt \\+
-
-EOT
-;
-        close $MD5;
         my $wait_string = ''; 
         if ($i >= $opts{t} and @wait_ids > $i - $opts{t}){
             $wait_string = "-hold_jid $wait_ids[$i - $opts{t}]";
         }
         my $cmd = "qsub $wait_string $script";
-        informUser("Executing: $cmd\n");  
-        my $output = `$cmd`; 
-        checkExit($?);
-        if ($output =~ /Your job (\d+) .* has been submitted/){
-            push @wait_ids, $1;
+        if ($opts{y}){
+            informUser("Dry run: $cmd\n");  
         }else{
-            die "Error parsing qsub output for '$cmd'\nOutput was: $output";
+            informUser("Executing: $cmd\n");  
+            my $output = `$cmd`; 
+            checkExit($?);
+            if ($output =~ /Your job (\d+) .* has been submitted/){
+                push @wait_ids, $1;
+            }else{
+                die "Error parsing qsub output for '$cmd'\nOutput was: $output";
+            }
         }
-        $cmd = "qsub -hold_jid $wait_ids[$i] $md5script";
-        informUser("Executing: $cmd\n");  
-        $output = `$cmd`; 
-        checkExit($?);
     }
 }
+
 #####################################################################
 sub getWithParallel{
     my ($FH, $filename) = tempfile();
     my @parstring = "";
-    foreach my $d (@sub_dirs){
+    foreach my $d (@files){
         print $FH  "$opts{u}\@$opts{s}:$d ./$opts{d}\n";
     }
     close $FH;
     my $cmd = "parallel ";
     $cmd .= "--tmux " if $opts{tmux};
     $cmd .= "--colsep ' ' -j $opts{t} $opts{a} -P 33001 -O 33001 -k 1 -l 500M :::: $filename ";
-    informUser("Attempting command:\n$cmd\n"); 
-    system($cmd);
-    checkExit($?);
+    if ($opts{y}){
+        informUser("Dry run command:\n$cmd\n"); 
+    }else{
+        informUser("Attempting command:\n$cmd\n"); 
+        system($cmd);
+        checkExit($?);
+    }
 
 =cut
-    for (my $i = 0; $i < @sub_dirs;){
+    for (my $i = 0; $i < @files;){
         for (my $j = 0; $j < $opts{t}; $j++){
-            last if $i >= @sub_dirs;
-            my $thr = threads->create(\&getDir, \@sub_dirs, $i++);
+            last if $i >= @dirs;
+            my $thr = threads->create(\&getDir, \@dirs, $i++);
         }
         while (threads->list(threads::all)){
             foreach my $joinable (threads->list(threads::joinable)){
                 $joinable->join();
-                if ($i < @sub_dirs){
-                    my $thr = threads->create(\&getDir, \@sub_dirs, $i++);
+                if ($i < @dirs){
+                    my $thr = threads->create(\&getDir, \@dirs, $i++);
                 }
             }
             sleep 10;
@@ -214,6 +222,7 @@ sub processDir{
     my $d = shift;
     #curl will list parent directories as well so we need to keep track 
     # and ignore already processed directories
+    $done_dirs{$d} = undef;
     my @d_files = ();
     my @sub_dirs = (); 
     informUser("Attempting to get file listing for directory '$d' with curl...\n");
@@ -224,26 +233,52 @@ sub processDir{
         die "Authorization failed - did you enter the correct password?\n";
     }
     foreach my $l (split("\n", $f_http)){
-        if($l =~ /href=\"\/(\Q$opts{d}\E\/\S+)\"/){
-            push @sub_dirs, $1;
+        if (@file_regexes){
+            my $f_match = 0;
+            foreach my $regex (@file_regexes){
+                if ($l =~ /data-fasp-url\=.*\@\S+:\d+\/($regex)\?/){
+                    push @d_files , "/$1";
+                    $f_match = 1;
+                }
+            }
+            if (not $f_match){
+                if($l =~ /href=\"\/(\Q$opts{d}\E\/\S+)\"/){
+                    push @sub_dirs, $1;
+                }
+            }
+        }else{
+            if($l =~ /href=\"\/(\Q$opts{d}\E\/\S+)\"/){
+                push @sub_dirs, $1;
+            }
         }
     }
-    @sub_dirs  = grep {$_ ne $d } @sub_dirs;#remove parent directories
-    if (not @sub_dirs){
+    @sub_dirs  = grep {!exists $done_dirs{$_} } @sub_dirs;#remove parent directories
+        
+    if (@d_files){
         informUser
         (
-            "WARNING: Could not identify any subdirectories ".
-            "from '$opts{s}/$d'\n"
+            "INFO: Identified ". scalar(@d_files) ." files from '$opts{s}/$d\n"
         );
-        die "Nothing to do - exiting.\n";
-    }elsif (@sub_dirs){
+        push @files, @d_files;
+    }
+    if (@sub_dirs){
         informUser
         (
             "INFO: Identified ". scalar(@sub_dirs) ." subdirectories from ".
             "'$opts{s}/$d\n"
         );
+        foreach my $sd (@sub_dirs){
+            informUser
+            (
+                "INFO: Processing subdirectory $sd\n"
+            );
+            processDir($sd);
+        }
+    }else{
+        if (not @file_regexes){
+            push @files, $d;
+        }
     }
-    return @sub_dirs;
 }
 
 #####################################################################
