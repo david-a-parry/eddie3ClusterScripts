@@ -19,7 +19,7 @@ my %opts =
     a => "$ENV{HOME}/.aspera/connect/bin/ascp",
     t => 8,
     p => "get",
-    r => 24,
+    r => "4:00:00",
     f => \@file_regexes,
 );
 GetOptions
@@ -33,7 +33,7 @@ GetOptions
     "p|prefix=s",
     "a|ascp=s",
     "q|qsub",
-    "r|runtime=i",
+    "r|runtime=s",
     "tmux",
     "y|dry_run",
     "h|help",
@@ -73,6 +73,13 @@ Options:
     
     -q,--qsub
         Use qsub to create and submit scripts
+    
+    -r,--runtime STRING
+        Runtime (in the format HH::MM::SS). Default = 4:00:00
+
+    -p,--prefix STRING
+        Filename prefix for scripts. Default = 'get'. Each script will be named
+        '[prefix].[no.].sh'.
 
     -a,--ascp FILE
         Location of ascp binary. Default = ~/.aspera/connect/bin/ascp
@@ -139,7 +146,7 @@ sub makeAndSubmitQsub{
 #\$ -o $script.stdout
 #\$ -cwd
 #\$ -V
-#\$ -l h_rt=$opts{r}:00:00
+#\$ -l h_rt=$opts{r}
 # Configure modules
 . /etc/profile.d/modules.sh
 
