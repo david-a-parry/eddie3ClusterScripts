@@ -36,6 +36,7 @@ GetOptions
     "r|runtime=s",
     "tmux",
     "y|dry_run",
+    "x|skip_completed",
     "h|help",
 ) or usage("Syntax error");
 usage() if $opts{h};
@@ -77,6 +78,10 @@ Options:
     -r,--runtime STRING
         Runtime (in the format HH::MM::SS). Default = 4:00:00
 
+    -x,--skip_completed
+        Skip completed scripts from previous runs (if exact same parameters used
+        and using --qsub)
+
     -p,--prefix STRING
         Filename prefix for scripts. Default = 'get'. Each script will be named
         '[prefix].[no.].sh'.
@@ -86,7 +91,7 @@ Options:
     
     --tmux
         Create tmux terminals for each command
-
+    
     -h,--help
         Show this message and exit
 
@@ -132,8 +137,17 @@ if ( $opts{q} ){
 #####################################################################
 sub makeAndSubmitQsub{
     my @wait_ids = (); 
+    my $subbed_scripts = 0;
     for (my $i = 0; $i < @files; $i++){
         my $script = "$opts{p}.$i.sh";
+        my $ascp_cmd = 
+"$opts{a} -k 1 -P 33001 -O 33001 -l 500M dparry\@edgen-dt.rdf.ac.uk:$files[$i] ./$files[$i]";
+        if ($opts{x}){
+            if (completedPreviously($script, $files[$i], $ascp_cmd)){
+                print STDERR "Skipping previously completed script/file: $script/$files[$i]\n";
+                next;
+            }
+        }
         open (my $SCRIPT, ">", $script) or die "Can't open qsub script $script for writing: $!\n";
         my ($f, $d) = fileparse($files[$i]); 
         if (not -d "./$d"){
@@ -150,15 +164,16 @@ sub makeAndSubmitQsub{
 # Configure modules
 . /etc/profile.d/modules.sh
 
-$opts{a} -k 1 -P 33001 -O 33001 -l 500M dparry\@edgen-dt.rdf.ac.uk:$files[$i] ./$files[$i]
+$ascp_cmd
 
 EOT
 ;
         close $SCRIPT;
         my $wait_string = ''; 
-        if ($i >= $opts{t} and @wait_ids > $i - $opts{t}){
-            $wait_string = "-hold_jid $wait_ids[$i - $opts{t}]";
+        if ($subbed_scripts >= $opts{t} and @wait_ids > $subbed_scripts - $opts{t}){
+            $wait_string = "-hold_jid $wait_ids[$subbed_scripts - $opts{t}]";
         }
+        $subbed_scripts++;
         my $cmd = "qsub $wait_string $script";
         if ($opts{y}){
             informUser("Dry run: $cmd\n");  
@@ -175,6 +190,36 @@ EOT
     }
 }
 
+#####################################################################
+sub completedPreviously{
+    my $script = shift;
+    my $file = shift;
+    my $cmd = shift;
+    my $output = "$script.stdout";
+    return 0 if not -e $output;
+    #IF OUTPUT FROM PREVIOUS RUN EXISTS...
+    my $comp = 0;
+    open (my $PREV, "<", $output) or die "Could not open $output: $!\n";
+    while (my $l = <$PREV>){
+        if ($l =~ /Completed:\s+\d+[KMGTP]*\s+bytes transferred in \d+ seconds/){
+        #IF PREVIOUS RUN COMPLETED
+            $comp = 1;
+        }
+    }
+    close $PREV;
+    if ($comp){
+        #IF PREVIOUS RUN COMPLETED
+        open (my $SCRIPT, "<", $script) or die "Could not open $script: $!\n";
+        local $/ = undef;
+        my $s = <$SCRIPT>;
+        if ($s =~ /$cmd/){
+            #AND WAS TRANSFERRING THE SAME FILE
+            return 1;
+        }
+    }
+    return 0;
+}
+        
 #####################################################################
 sub getWithParallel{
     my ($FH, $filename) = tempfile();
