@@ -37,6 +37,7 @@ GetOptions
     "tmux",
     "y|dry_run",
     "x|skip_completed",
+    "e|skip_existing",
     "h|help",
 ) or usage("Syntax error");
 usage() if $opts{h};
@@ -77,6 +78,10 @@ Options:
     
     -r,--runtime STRING
         Runtime (in the format HH::MM::SS). Default = 4:00:00
+
+    -e,--skip_existing
+        Skip files that already exist (note that this will not check 
+        size/checksums). 
 
     -x,--skip_completed
         Skip completed scripts from previous runs (if exact same parameters used
@@ -145,6 +150,12 @@ sub makeAndSubmitQsub{
         if ($opts{x}){
             if (completedPreviously($script, $files[$i], $ascp_cmd)){
                 print STDERR "Skipping previously completed script/file: $script/$files[$i]\n";
+                next;
+            }
+        }
+        if ($opts{e}){
+            if (-e "./$files[$i]"){
+                print STDERR "Skipping existing file: $files[$i]\n";
                 next;
             }
         }
