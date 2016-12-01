@@ -11,14 +11,14 @@ my $date = strftime( "%d-%m-%y", localtime );
 my %opts = 
 (
     i => \@gvcfs,
-    f => "/exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/seq/hg38.fa",
-    d => "/exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/seq/hg38.dict",
+    f => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/seq/hg38.fa",
+    d => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/seq/hg38.dict",
     t => "$ENV{HOME}/scratch/tmp/",
     g => "$ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar", 
-    omni => "/exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/variation/1000G_omni2.5.vcf.gz",
-    s => "/exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/variation/1000G_phase1.snps.high_confidence.vcf.gz",
-    dbsnp => "/exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/variation/dbsnp-147.vcf.gz",
-    m => "/exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/variation/Mills_and_1000G_gold_standard.indels.vcf.gz",
+    omni => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/1000G_omni2.5.vcf.gz",
+    s => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/1000G_phase1.snps.high_confidence.vcf.gz",
+    dbsnp => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/dbsnp-147.vcf.gz",
+    m => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/Mills_and_1000G_gold_standard.indels.vcf.gz",
     hapmap => "/exports/igmm/eddie/aitman-lab/ref/hg38/hg38bundle/hapmap_3.3.hg38.vcf.gz",
     r => "/exports/igmm/eddie/aitman-lab/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz",
     v => "variants-$date",
@@ -47,7 +47,7 @@ usage("-d/--dict option is required.\n") if not $opts{d};
 usage("-o/--output_dir option is required.\n") if not $opts{o};
 usage("-i/--gvcfs option is required.\n") if not @gvcfs;
 
-open (my $DICT, $opts{d}) or die "$!\n";
+open (my $DICT, $opts{d}) or die "Can't open $opts{d} for reading: $!\n";
 my @contigs = (); 
 while (my $line = <$DICT>){
    if ($line =~ /^\@SQ\s+.*SN:(\S+)/){
@@ -155,7 +155,7 @@ USAGE: $0 -d <dict> -o <output_dir> -i gvcf1 [gvcf2 ... gvcfN]
 OPTIONS:
 
     -d,--dict
-        Dict file for reference genome for getting chromosome names. Default = /exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/seq/hg38.dict
+        Dict file for reference genome for getting chromosome names. Default = /exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/seq/hg38.dict
 
     -o,--output_dir
         Directory to put output VCF files.
@@ -179,7 +179,7 @@ OPTIONS:
         Directory to use for tmp files. Defalt = $ENV{HOME}/scratch/tmp/
     
     -f,--fasta
-        Location of reference genome fasta. Default = /exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/seq/hg38.fa
+        Location of reference genome fasta. Default = /exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/seq/hg38.fa
     
     -m,--mills
         Mills and 1000G gold standard indels
