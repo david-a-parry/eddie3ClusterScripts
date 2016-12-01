@@ -29,7 +29,7 @@ my @info = ("job-ID", "prior", "name", "user", "state", "submit/start at", "queu
 my @widths = map { length($info[$_]) } 0..$#info;
 my @job_strings = ();
 foreach my $q (@qstat){
-    if ($q =~ /^(\d+)/){
+    if ($q =~ /^\s*(\d+)/){
         getJobInfo();
         %job = ();
         getColumnValues($q);
