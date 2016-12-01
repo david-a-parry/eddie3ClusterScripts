@@ -10,8 +10,8 @@ print <<EOT
 #\$ -cwd
 #\$ -V
 #\$ -pe sharedmem 8
-#\$ -l h_rt=98:00:00
-#\$ -l h_vmem=24G
+#\$ -l h_rt=96:00:00
+#\$ -l h_vmem=4G
 . /etc/profile.d/modules.sh
 module load igmm/libs/htslib/1.3
 module load igmm/apps/samtools/1.2
