@@ -82,7 +82,7 @@ Usage: $0 [options]
 Options: 
 
     -r STRING --runtime STRING
-         Value for runtime argument. Default = 1:00::00
+         Value for runtime argument. Default = 1:00:00
         
     -m STRING --memory STRING
          Value for memory argument. Default = 1G
