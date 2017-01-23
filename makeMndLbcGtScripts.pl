@@ -113,7 +113,7 @@ print $GSCRIPT <<EOT
 # Load modules
 module load  igmm/apps/bcbio/20160119
 
-java -Djava.io.tmpdir=$tmp -Xmx12g -jar $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar -R $fasta  -T CalculateGenotypePosteriors --supporting $refine -V $out_stub.ts99pt9.vcf.gz -o $out_stub.ts99pt9.postGCP.vcf.gz 
+java -Djava.io.tmpdir=$tmp -Xmx12g -jar $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar -R $fasta  -T CalculateGenotypePosteriors --supporting $refine -V $out_stub.ts99pt9.vcf.gz -o $out_stub.ts99pt9.postGCP.vcf.gz -XL chrY
 
 EOT
 ;
