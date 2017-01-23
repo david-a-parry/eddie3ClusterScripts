@@ -90,7 +90,7 @@ sub makeJoinScript{
 # Load modules
 module load  igmm/apps/bcbio/20160119
 
-java -Djava.io.tmpdir=$opts{t} -Xmx12g -cp $opts{g} -R $opts{f} --assumeSorted -out $output  -V $input
+java -Djava.io.tmpdir=$opts{t} -Xmx12g -cp $opts{g} org.broadinstitute.gatk.tools.CatVariants  -R $opts{f} --assumeSorted -out $output  -V $input
 
 EOT
 ;
