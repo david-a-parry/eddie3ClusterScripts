@@ -276,13 +276,13 @@ sub makeApplyRecal{
 #\$ -cwd
 #\$ -V
 #\$ -l h_rt=4:00:00
-#\$ -l h_vmem=12G
+#\$ -l h_vmem=8G
 # Configure modules
 . /etc/profile.d/modules.sh
 # Load modules
 module load  igmm/apps/bcbio/20160119
 
-java -Djava.io.tmpdir=$tmp -Xmx8g -jar $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar -R $fasta -T ApplyRecalibration -input $in -recalFile $out_stub.recalibrate_$mode.recal -tranchesFile  $out_stub.recalibrate_$mode.tranches -mode $mode --ts_filter_level 99.9 -o $out -L $chr:$start-$end
+java -Djava.io.tmpdir=$tmp -Xmx3g -jar $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar -R $fasta -T ApplyRecalibration -input $in -recalFile $out_stub.recalibrate_$mode.recal -tranchesFile  $out_stub.recalibrate_$mode.tranches -mode $mode --ts_filter_level 99.9 -o $out -L $chr:$start-$end
 
 EOT
 ;
