@@ -43,6 +43,8 @@ $sharedmem
 #\$ -l h_vmem=$opt{m}
 . /etc/profile.d/modules.sh
 module load igmm/apps/tabix/0.2.5
+module load igmm/libs/htslib/1.3
+module load igmm/apps/samtools/1.2
 module load igmm/apps/perl/5.24.0
 module load igmm/apps/vep/86
 
