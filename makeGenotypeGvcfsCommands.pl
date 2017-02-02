@@ -22,10 +22,13 @@ my %opts =
     hapmap => "/exports/igmm/eddie/aitman-lab/ref/hg38/hg38bundle/hapmap_3.3.hg38.vcf.gz",
     r => "/exports/igmm/eddie/aitman-lab/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz",
     v => "variants-$date",
-    
+    e => 4,
+    c => 30,
 );
 GetOptions(
     \%opts,
+    "c|call_conf=i",
+    "e|emit_conf=i",
     "dbsnp=s",
     "d|dict=s",
     "f|fasta=s",
@@ -85,7 +88,7 @@ foreach my $chr (@contigs){
 # Load modules
 module load  igmm/apps/bcbio/20160119
 
-java -Djava.io.tmpdir=$opts{t} -Xmx8g -jar $opts{g} -T GenotypeGVCFs -R $opts{f} -D $opts{dbsnp} -stand_call_conf 30 -stand_emit_conf 4 -L $chr -o $chrom_vcf $vcf_string
+java -Djava.io.tmpdir=$opts{t} -Xmx8g -jar $opts{g} -T GenotypeGVCFs -R $opts{f} -D $opts{dbsnp} -stand_call_conf $opts{c} -stand_emit_conf $opts{e} -L $chr -o $chrom_vcf $vcf_string
 EOT
 ;
     close $SCRIPT;
@@ -199,6 +202,12 @@ OPTIONS:
     
     --hapmap
         HapMap SNPs. 
+    
+    -c,--call_conf
+        Call confidence for PASS variants (i.e. value to pass to -stand_call_conf option of GenotypeGVCFs).
+
+    -e,--emit_conf
+        Call confidence for outputting variants (i.e. value to pass to -stand_emit_conf option of GenotypeGVCFs).
 
     -h,--help
         Show this message and exit.
