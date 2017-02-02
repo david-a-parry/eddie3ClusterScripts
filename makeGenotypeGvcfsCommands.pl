@@ -31,6 +31,7 @@ GetOptions(
     "f|fasta=s",
     "g|gatk",
     "h|help",
+    "hapmap=s",
     "i|gvcfs=s{,}",
     "m|mills=s",
     "omni=s",
