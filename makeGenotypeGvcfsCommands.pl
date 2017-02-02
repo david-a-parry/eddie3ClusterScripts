@@ -28,15 +28,16 @@ my %opts =
 GetOptions(
     \%opts,
     "c|call_conf=i",
-    "e|emit_conf=i",
     "dbsnp=s",
     "d|dict=s",
+    "e|emit_conf=i",
     "f|fasta=s",
     "g|gatk",
     "h|help",
     "hapmap=s",
     "i|gvcfs=s{,}",
     "m|mills=s",
+    "n|no_gcp",
     "omni=s",
     "o|output_dir=s",
     "p|ped=s",
@@ -128,14 +129,22 @@ java -Djava.io.tmpdir=$opts{t} -Xmx8G -jar $opts{g} -R $opts{f} -T VariantRecali
  
 java -Djava.io.tmpdir=$opts{t} -Xmx8G -jar $opts{g} -R $opts{f} -T ApplyRecalibration -recalFile $opts{o}/var.$opts{v}.recalibrate_INDEL.recal -tranchesFile  $opts{o}/var.$opts{v}.recalibrate_INDEL.tranches -mode INDEL --ts_filter_level 99.9 -input $opts{o}/var.$opts{v}.snpTs99pt9.vcf.gz -o $opts{o}/var.$opts{v}.ts99pt9.vcf.gz
 
-java -Djava.io.tmpdir=$opts{t} -Xmx4G -jar $opts{g} -R $opts{f}  -T CalculateGenotypePosteriors --supporting $opts{r} $pedstring -V $opts{o}/var.$opts{v}.ts99pt9.vcf.gz -o $opts{o}/var.$opts{v}.ts99pt9.postGCP.vcf.gz -XL chrM -XL chrY -XL chrY_KI270740v1_random
-
 EOT
 ;
 
-if ($pedstring){
+my $last_output = "$opts{o}/var.$opts{v}.ts99pt9.vcf.gz";
+
+unless($opts{n}){
     print $SCRIPT 
-"java -Djava.io.tmpdir=$opts{t} -Xmx4G -jar $opts{g} -R $opts{f} -T VariantAnnotator -A PossibleDeNovo  $pedstring -V $opts{o}/var.$opts{v}.ts99pt9.postGCP.vcf.gz -o $opts{o}/var.$opts{v}.ts99pt9.postGCP.denovoAnnot.vcf.gz\n";
+"java -Djava.io.tmpdir=$opts{t} -Xmx4G -jar $opts{g} -R $opts{f}  -T CalculateGenotypePosteriors --supporting $opts{r} $pedstring -V $opts{o}/var.$opts{v}.ts99pt9.vcf.gz -o $opts{o}/var.$opts{v}.ts99pt9.postGCP.vcf.gz -XL chrM -XL chrY -XL chrY_KI270740v1_random\n\n";
+    $last_output = "$opts{o}/var.$opts{v}.ts99pt9.postGCP.vcf.gz";
+}
+
+if ($pedstring){
+    my $final = $last_output;
+    $final =~ s/\.vcf\.gz$/.denovoAnnot.vcf.gz/;
+    print $SCRIPT 
+"java -Djava.io.tmpdir=$opts{t} -Xmx4G -jar $opts{g} -R $opts{f} -T VariantAnnotator -A PossibleDeNovo  $pedstring -V $last_output -o $final\n";
 }
 
 close $SCRIPT;
@@ -208,6 +217,9 @@ OPTIONS:
 
     -e,--emit_conf
         Call confidence for outputting variants (i.e. value to pass to -stand_emit_conf option of GenotypeGVCFs).
+
+    -n,--no_gcp
+        Use this flag to skip the GATK CalculateGenotypePosteriors step.
 
     -h,--help
         Show this message and exit.
