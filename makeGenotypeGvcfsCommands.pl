@@ -22,17 +22,22 @@ my %opts =
     hapmap => "/exports/igmm/eddie/aitman-lab/ref/hg38/hg38bundle/hapmap_3.3.hg38.vcf.gz",
     r => "/exports/igmm/eddie/aitman-lab/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz",
     v => "variants-$date",
-    
+    e => 4,
+    c => 30,
 );
 GetOptions(
     \%opts,
+    "c|call_conf=i",
     "dbsnp=s",
     "d|dict=s",
+    "e|emit_conf=i",
     "f|fasta=s",
     "g|gatk",
     "h|help",
+    "hapmap=s",
     "i|gvcfs=s{,}",
     "m|mills=s",
+    "n|no_gcp",
     "omni=s",
     "o|output_dir=s",
     "p|ped=s",
@@ -84,7 +89,7 @@ foreach my $chr (@contigs){
 # Load modules
 module load  igmm/apps/bcbio/20160119
 
-java -Djava.io.tmpdir=$opts{t} -Xmx8g -jar $opts{g} -T GenotypeGVCFs -R $opts{f} -D $opts{dbsnp} -stand_call_conf 30 -stand_emit_conf 4 -L $chr -o $chrom_vcf $vcf_string
+java -Djava.io.tmpdir=$opts{t} -Xmx8g -jar $opts{g} -T GenotypeGVCFs -R $opts{f} -D $opts{dbsnp} -stand_call_conf $opts{c} -stand_emit_conf $opts{e} -L $chr -o $chrom_vcf $vcf_string
 EOT
 ;
     close $SCRIPT;
@@ -124,14 +129,22 @@ java -Djava.io.tmpdir=$opts{t} -Xmx8G -jar $opts{g} -R $opts{f} -T VariantRecali
  
 java -Djava.io.tmpdir=$opts{t} -Xmx8G -jar $opts{g} -R $opts{f} -T ApplyRecalibration -recalFile $opts{o}/var.$opts{v}.recalibrate_INDEL.recal -tranchesFile  $opts{o}/var.$opts{v}.recalibrate_INDEL.tranches -mode INDEL --ts_filter_level 99.9 -input $opts{o}/var.$opts{v}.snpTs99pt9.vcf.gz -o $opts{o}/var.$opts{v}.ts99pt9.vcf.gz
 
-java -Djava.io.tmpdir=$opts{t} -Xmx4G -jar $opts{g} -R $opts{f}  -T CalculateGenotypePosteriors --supporting $opts{r} $pedstring -V $opts{o}/var.$opts{v}.ts99pt9.vcf.gz -o $opts{o}/var.$opts{v}.ts99pt9.postGCP.vcf.gz -XL chrM -XL chrY -XL chrY_KI270740v1_random
-
 EOT
 ;
 
-if ($pedstring){
+my $last_output = "$opts{o}/var.$opts{v}.ts99pt9.vcf.gz";
+
+unless($opts{n}){
     print $SCRIPT 
-"java -Djava.io.tmpdir=$opts{t} -Xmx4G -jar $opts{g} -R $opts{f} -T VariantAnnotator -A PossibleDeNovo  $pedstring -V $opts{o}/var.$opts{v}.ts99pt9.postGCP.vcf.gz -o $opts{o}/var.$opts{v}.ts99pt9.postGCP.denovoAnnot.vcf.gz\n";
+"java -Djava.io.tmpdir=$opts{t} -Xmx4G -jar $opts{g} -R $opts{f}  -T CalculateGenotypePosteriors --supporting $opts{r} $pedstring -V $opts{o}/var.$opts{v}.ts99pt9.vcf.gz -o $opts{o}/var.$opts{v}.ts99pt9.postGCP.vcf.gz -XL chrM -XL chrY -XL chrY_KI270740v1_random\n\n";
+    $last_output = "$opts{o}/var.$opts{v}.ts99pt9.postGCP.vcf.gz";
+}
+
+if ($pedstring){
+    my $final = $last_output;
+    $final =~ s/\.vcf\.gz$/.denovoAnnot.vcf.gz/;
+    print $SCRIPT 
+"java -Djava.io.tmpdir=$opts{t} -Xmx4G -jar $opts{g} -R $opts{f} -T VariantAnnotator -A PossibleDeNovo  $pedstring -V $last_output -o $final\n";
 }
 
 close $SCRIPT;
@@ -198,6 +211,15 @@ OPTIONS:
     
     --hapmap
         HapMap SNPs. 
+    
+    -c,--call_conf
+        Call confidence for PASS variants (i.e. value to pass to -stand_call_conf option of GenotypeGVCFs).
+
+    -e,--emit_conf
+        Call confidence for outputting variants (i.e. value to pass to -stand_emit_conf option of GenotypeGVCFs).
+
+    -n,--no_gcp
+        Use this flag to skip the GATK CalculateGenotypePosteriors step.
 
     -h,--help
         Show this message and exit.
