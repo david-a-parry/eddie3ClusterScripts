@@ -6,11 +6,18 @@ use Getopt::Long;
 use POSIX qw/ceil strftime/;
 use File::Basename;
 
-my %opts = ();
+my @genomic = ();
+my @per_chrom = ();
+#my @per_chrom = glob '/exports/igmm/eddie/igmm_datastore_MND-WGS/LBC_gvcf/batched_gvcf/*gz';
+#my @mnd = glob '/exports/igmm/eddie//igmm_datastore_MND-WGS/X15030_X0008AT_10094AT_X16084_combined/*gz';
+my %opts = (p => \@per_chrom, g => \@genomic);
 GetOptions
 (
     \%opts,
+    "p|per_chrom=s{,}",
+    "g|genomic=s{,}",
     "n|no_exec",
+    "b|blacklist_samples=s",
     "a|after_cat",
 ) or die "error in option spec\n";
 
@@ -28,14 +35,11 @@ my $mills = "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/h
 my $hapmap = "/exports/igmm/eddie/aitman-lab/ref/hg38/hg38bundle/hapmap_3.3.hg38.vcf.gz";
 my $refine = "/exports/igmm/eddie/aitman-lab/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz";
  
-my $lbc_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/lbc_excluded_samples.txt";
-my $mnd_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/mnd_excluded_samples.txt";
+#my $lbc_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/lbc_excluded_samples.txt";
+#my $mnd_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/mnd_excluded_samples.txt";
 
-my @per_chrom = glob '/exports/igmm/eddie/igmm_datastore_MND-WGS/LBC_gvcf/batched_gvcf/*gz';
-my @mnd = glob '/exports/igmm/eddie//igmm_datastore_MND-WGS/X15030_X0008AT_10094AT_X16084_combined/*gz';
-die "No MND GVCFs!\n" if not @mnd and not $opts{a};
-die "No LBC GVCFs!\n" if not @per_chrom and not $opts{a};
-;
+die "No GVCFs!\n" if not @genomic and not @per_chrom and not $opts{a};
+
 open (my $DICT, $dict) or die "Could not read $dict: $!\n";
 my %contigs = (); 
 while (my $line = <$DICT>){
@@ -258,14 +262,18 @@ sub makeApplyRecal{
     my ($chr, $start, $end, $type) = @_;
     my $recal_script = "subscripts/$type"."ApplyRecal_$chr-$start-$end.sh";
     open (my $APPLY, ">", $recal_script) or die "Could not open $recal_script for writing: $!\n";
+    my $suffix = "mnd_lbc";
+    if ($opts{b}){
+        $suffix = "mnd_lbc.valid_samples";
+    }
     my $in;
     my $out;
     if ($type eq 'snp'){
-        $in = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.raw.vcf.gz";
-        $out = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.snpTs99pt9.vcf.gz";
+        $in = "per_chrom/var.$chr-$start-$end.$suffix.raw.vcf.gz";
+        $out = "per_chrom/var.$chr-$start-$end.$suffix.snpTs99pt9.vcf.gz";
     }else{
-        $in  = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.snpTs99pt9.vcf.gz";
-        $out = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.ts99pt9.vcf.gz";
+        $in  = "per_chrom/var.$chr-$start-$end.$suffix.snpTs99pt9.vcf.gz";
+        $out = "per_chrom/var.$chr-$start-$end.$suffix.ts99pt9.vcf.gz";
     }
     my $mode = uc($type); 
     print $APPLY <<EOT
@@ -326,17 +334,18 @@ EOT
               "-R $fasta ".
               "-D $dbsnp ".
               "-o $pre_out ".
-              "-V " . join(" -V ", @mnd, @$vcfs) . "\n";
-    print $GT "java -Djava.io.tmpdir=$tmp -Xmx24g -jar ".
-              "$ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar ".
-              "-T SelectVariants " .
-              "-R $fasta ".
-              "-xl_sf $lbc_exclude " .
-              "-xl_sf $mnd_exclude " .
-              "-V $pre_out ".
-              "-o $out ".
-              "-env\n";
-    close $GT;
+              "-V " . join(" -V ", @genomic, @$vcfs) . "\n";
+    if ($opts{b}){
+        print $GT "java -Djava.io.tmpdir=$tmp -Xmx24g -jar ".
+                  "$ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar ".
+                  "-T SelectVariants " .
+                  "-R $fasta ".
+                  "-xl_sf $opts{b} " .
+                  "-V $pre_out ".
+                  "-o $out ".
+                  "-env\n";
+        close $GT;
+    }
     return $gt_script;
 }
 
