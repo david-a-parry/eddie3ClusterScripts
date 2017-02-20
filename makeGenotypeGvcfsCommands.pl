@@ -8,6 +8,11 @@ use Getopt::Long;
 
 my @gvcfs = (); 
 my $date = strftime( "%d-%m-%y", localtime );
+my $rdir = "/exports/igmm/eddie/aitman-lab";
+if ($ENV{USER} eq 'clogan2'){
+    $rdir = "/exports/igmm/eddie/mopd";
+}
+
 my %opts = 
 (
     i => \@gvcfs,
@@ -19,8 +24,8 @@ my %opts =
     s => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/1000G_phase1.snps.high_confidence.vcf.gz",
     dbsnp => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/dbsnp-147.vcf.gz",
     m => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/Mills_and_1000G_gold_standard.indels.vcf.gz",
-    hapmap => "/exports/igmm/eddie/aitman-lab/ref/hg38/hg38bundle/hapmap_3.3.hg38.vcf.gz",
-    r => "/exports/igmm/eddie/aitman-lab/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz",
+    hapmap => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/hapmap_3.3.vcf.gz",
+    r => "$rdir/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz",
     v => "variants-$date",
     e => 4,
     c => 30,
