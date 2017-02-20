@@ -79,6 +79,7 @@ my @vep_out     = ();
 my @recal_out   = ();
 my @snp_recal   = ();
 my @indel_recal = ();
+my @geno_recal = ();
 my $out_stub = "var.mnd_lbc";
 foreach my $c ( 1..22, 'X', 'Y' ) {
     my $chr = "chr$c";
@@ -92,9 +93,10 @@ foreach my $c ( 1..22, 'X', 'Y' ) {
             my $vep_script = makeVepScript($chr, $start, $end);
             push @wait_ids, doQsub("qsub -hold_jid $w $vep_script");
         }
-        my ($snp, $indel, $recal_out) = makeApplyRecalScripts($chr, $start, $end); 
+        my ($snp, $indel, $gcp, $recal_out) = makeApplyRecalScripts($chr, $start, $end); 
         push @snp_recal, $snp;
         push @indel_recal, $indel;
+        push @geno_recal, $gcp;
         push @recal_out, $recal_out;
     }
 }
@@ -106,6 +108,8 @@ unless ($opts{a}){
 my @apply_wait = vqsrAndApply();
 my $cat_vqsr_wait = concatVqsr();
 
+
+=cut
 my $recal_genos = "subscripts/recal_genos.sh";
 open (my $GSCRIPT, ">$recal_genos") or die "Error writing to $recal_genos: $!\n";
 print $GSCRIPT <<EOT
@@ -127,6 +131,7 @@ EOT
 close $GSCRIPT; 
 my $r_cmd = "qsub -hold_jid $cat_vqsr_wait $recal_genos";
 doQsub($r_cmd);
+=cut 
 
 ################################################
 sub doQsub{
@@ -164,7 +169,8 @@ sub submitApplyRecalScripts{
     for (my $i = 0; $i < @snp_recal; $i++){ 
         my $w = doQsub("qsub $snp_hold $snp_recal[$i]");
         $w .= ",$indel_wait" if defined $indel_wait;
-        push @apply_wait, doQsub("qsub -hold_jid $w $indel_recal[$i]");
+        my $gcp_wait = doQsub("qsub -hold_jid $w $indel_recal[$i]");
+        push @apply_wait, doQsub("qsub -hold_jid $gcp_wait $geno_recal[$i]");
     }
     return @apply_wait;
 }
@@ -213,7 +219,7 @@ EOT
 #################################################
 sub concatVqsr{
     my $cat_script = "subscripts/catVqsr.sh";
-    makeConcatScript($cat_script, "$out_stub.ts99pt9.vcf.gz", \@recal_out);
+    makeConcatScript($cat_script, "$out_stub.ts99pt9.postGcp.vcf.gz", \@recal_out);
     return doQsub("qsub -hold_jid " .join(",", @apply_wait ) . " $cat_script"); 
 }
 
@@ -268,9 +274,53 @@ sub makeApplyRecalScripts{
     my ($chr, $start, $end) = @_;
     my @scripts;
     my ($s_script, undef) = makeApplyRecal($chr, $start, $end, "snp");
-    my ($i_script, $output) = makeApplyRecal($chr, $start, $end, "indel");
-    return ($s_script, $i_script, $output);
+    my ($i_script, $i_output) = makeApplyRecal($chr, $start, $end, "indel");
+    my ($r_script, $output) = makeGcp($chr, $start, $end, $i_output);
+    return ($s_script, $i_script, $r_script, $output);
 }
+
+#################################################
+sub makeGcp{
+    my ($chr, $start, $end, $input) = @_;
+    my $recal_script = "subscripts/recalGenos_$chr-$start-$end.sh";
+    open (my $RECAL, ">", $recal_script) or die "Could not open $recal_script for writing: $!\n";
+    (my  $out = $input) =~ s/\.vcf\.gz$//;
+    $out .= ".postGcp.vcf.gz";#do this in two steps to make sure suffix gets added 
+                          # even if problem with substitute command
+
+    my $cmd = "java -Djava.io.tmpdir=$tmp -Xmx3g -jar $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar -R $fasta  -T CalculateGenotypePosteriors --supporting $refine -V $input -o $out -L $chr:$start-$end";
+    if ($chr eq 'chrY'){#CalculateGenotypePosteriors chokes on haploid GTs
+        $cmd = "echo 'GCP will not be carried out on chrY'";
+        $out = $input;
+    }
+    print $RECAL <<EOT
+#!/bin/bash
+#\$ -M david.parry\@igmm.ed.ac.uk
+#\$ -m abe
+#\$ -e $recal_script.stderr
+#\$ -o $recal_script.stdout
+#\$ -cwd
+#\$ -V
+#\$ -l h_rt=8:00:00
+#\$ -l h_vmem=8G
+# Configure modules
+. /etc/profile.d/modules.sh
+# Load modules
+module load  igmm/apps/bcbio/20160119
+
+if [ -f $input ]; then
+    $cmd
+else
+    echo "WARN: $input does not exist"
+fi
+
+EOT
+;
+
+close $RECAL; 
+    return ($recal_script, $out);
+}
+
 
 #################################################
 sub makeApplyRecal{
