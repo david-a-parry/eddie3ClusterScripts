@@ -6,11 +6,18 @@ use Getopt::Long;
 use POSIX qw/ceil strftime/;
 use File::Basename;
 
-my %opts = ();
+my @genomic = ();
+my @per_chrom = ();
+#my @per_chrom = glob '/exports/igmm/eddie/igmm_datastore_MND-WGS/LBC_gvcf/batched_gvcf/*gz';
+#my @mnd = glob '/exports/igmm/eddie//igmm_datastore_MND-WGS/X15030_X0008AT_10094AT_X16084_combined/*gz';
+my %opts = (p => \@per_chrom, g => \@genomic);
 GetOptions
 (
     \%opts,
+    "p|per_chrom=s{,}",
+    "g|genomic=s{,}",
     "n|no_exec",
+    "b|blacklist_samples=s",
     "a|after_cat",
 ) or die "error in option spec\n";
 
@@ -28,14 +35,11 @@ my $mills = "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/h
 my $hapmap = "/exports/igmm/eddie/aitman-lab/ref/hg38/hg38bundle/hapmap_3.3.hg38.vcf.gz";
 my $refine = "/exports/igmm/eddie/aitman-lab/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz";
  
-my $lbc_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/lbc_excluded_samples.txt";
-my $mnd_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/mnd_excluded_samples.txt";
+#my $lbc_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/lbc_excluded_samples.txt";
+#my $mnd_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/mnd_excluded_samples.txt";
 
-my @per_chrom = glob '/exports/igmm/eddie/igmm_datastore_MND-WGS/LBC_gvcf/batched_gvcf/*gz';
-my @mnd = glob '/exports/igmm/eddie//igmm_datastore_MND-WGS/X15030_X0008AT_10094AT_X16084_combined/*gz';
-die "No MND GVCFs!\n" if not @mnd and not $opts{a};
-die "No LBC GVCFs!\n" if not @per_chrom and not $opts{a};
-;
+die "No GVCFs!\n" if not @genomic and not @per_chrom and not $opts{a};
+
 open (my $DICT, $dict) or die "Could not read $dict: $!\n";
 my %contigs = (); 
 while (my $line = <$DICT>){
@@ -69,11 +73,13 @@ foreach my $k (keys %batches){
     }
 }
 
-my @wait_ids  = ();
-my @out_files = ();
-my @recal_out = ();
-my @snp_recal = ();
+my @wait_ids    = ();
+my @out_files   = ();
+my @vep_out     = ();
+my @recal_out   = ();
+my @snp_recal   = ();
 my @indel_recal = ();
+my @geno_recal = ();
 my $out_stub = "var.mnd_lbc";
 foreach my $c ( 1..22, 'X', 'Y' ) {
     my $chr = "chr$c";
@@ -83,11 +89,14 @@ foreach my $c ( 1..22, 'X', 'Y' ) {
         my $end = ($i + $split) < $contigs{$chr} ? $i + $split : $contigs{$chr}; 
         unless ($opts{a}){
             my $gt_script = makeGtScript($chr, $start, $end, \@v);
-            push @wait_ids, doQsub("qsub $gt_script");
+            my $w = doQsub("qsub $gt_script");
+            my $vep_script = makeVepScript($chr, $start, $end);
+            push @wait_ids, doQsub("qsub -hold_jid $w $vep_script");
         }
-        my ($snp, $indel, $recal_out) = makeApplyRecalScripts($chr, $start, $end); 
+        my ($snp, $indel, $gcp, $recal_out) = makeApplyRecalScripts($chr, $start, $end); 
         push @snp_recal, $snp;
         push @indel_recal, $indel;
+        push @geno_recal, $gcp;
         push @recal_out, $recal_out;
     }
 }
@@ -99,6 +108,8 @@ unless ($opts{a}){
 my @apply_wait = vqsrAndApply();
 my $cat_vqsr_wait = concatVqsr();
 
+
+=cut
 my $recal_genos = "subscripts/recal_genos.sh";
 open (my $GSCRIPT, ">$recal_genos") or die "Error writing to $recal_genos: $!\n";
 print $GSCRIPT <<EOT
@@ -120,6 +131,7 @@ EOT
 close $GSCRIPT; 
 my $r_cmd = "qsub -hold_jid $cat_vqsr_wait $recal_genos";
 doQsub($r_cmd);
+=cut 
 
 ################################################
 sub doQsub{
@@ -157,7 +169,8 @@ sub submitApplyRecalScripts{
     for (my $i = 0; $i < @snp_recal; $i++){ 
         my $w = doQsub("qsub $snp_hold $snp_recal[$i]");
         $w .= ",$indel_wait" if defined $indel_wait;
-        push @apply_wait, doQsub("qsub -hold_jid $w $indel_recal[$i]");
+        my $gcp_wait = doQsub("qsub -hold_jid $w $indel_recal[$i]");
+        push @apply_wait, doQsub("qsub -hold_jid $gcp_wait $geno_recal[$i]");
     }
     return @apply_wait;
 }
@@ -168,8 +181,12 @@ sub makeConcatScript{
     my $output = shift;
     my $f = shift;
     open (my $CAT, ">$script") or die "Error writing to $script: $!\n";
-    my $join_string = join(" -V ", @$f); 
-     print $CAT <<EOT
+    #my $join_string = join(" -V ", @$f); 
+    #vep commands which parse a vcf with 0 variants will not produce an output - we have to check if file exist
+    open (my $LIST, ">$script.filelist") or die "Error writing to $script.filelist: $!\n";
+    print $LIST join("\n", @$f);
+    print $CAT <<EOT
+#!/bin/bash
 #\$ -M david.parry\@igmm.ed.ac.uk
 #\$ -m abe
 #\$ -cwd
@@ -181,7 +198,17 @@ sub makeConcatScript{
 # Load modules
 module load  igmm/apps/bcbio/20160119
 
-java -Djava.io.tmpdir=$tmp -Xmx12g -cp $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar org.broadinstitute.gatk.tools.CatVariants  -R $fasta --assumeSorted -out $output  -V $join_string
+#vep commands which parse a vcf with 0 variants will not produce an output - we have to check if files exist
+VSTRING=''
+for F in `cat $script.filelist`; do
+    if [ -f \$F ]; then
+        VSTRING="\$VSTRING -V \$F"
+    else
+        echo "WARN: \$F does not exist"
+    fi
+done
+
+java -Djava.io.tmpdir=$tmp -Xmx12g -cp $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar org.broadinstitute.gatk.tools.CatVariants  -R $fasta --assumeSorted -out $output  \$VSTRING
 
 EOT
 ;
@@ -192,7 +219,7 @@ EOT
 #################################################
 sub concatVqsr{
     my $cat_script = "subscripts/catVqsr.sh";
-    makeConcatScript($cat_script, "$out_stub.ts99pt9.vcf.gz", \@recal_out);
+    makeConcatScript($cat_script, "$out_stub.ts99pt9.postGcp.vcf.gz", \@recal_out);
     return doQsub("qsub -hold_jid " .join(",", @apply_wait ) . " $cat_script"); 
 }
 
@@ -247,9 +274,53 @@ sub makeApplyRecalScripts{
     my ($chr, $start, $end) = @_;
     my @scripts;
     my ($s_script, undef) = makeApplyRecal($chr, $start, $end, "snp");
-    my ($i_script, $output) = makeApplyRecal($chr, $start, $end, "indel");
-    return ($s_script, $i_script, $output);
+    my ($i_script, $i_output) = makeApplyRecal($chr, $start, $end, "indel");
+    my ($r_script, $output) = makeGcp($chr, $start, $end, $i_output);
+    return ($s_script, $i_script, $r_script, $output);
 }
+
+#################################################
+sub makeGcp{
+    my ($chr, $start, $end, $input) = @_;
+    my $recal_script = "subscripts/recalGenos_$chr-$start-$end.sh";
+    open (my $RECAL, ">", $recal_script) or die "Could not open $recal_script for writing: $!\n";
+    (my  $out = $input) =~ s/\.vcf\.gz$//;
+    $out .= ".postGcp.vcf.gz";#do this in two steps to make sure suffix gets added 
+                          # even if problem with substitute command
+
+    my $cmd = "java -Djava.io.tmpdir=$tmp -Xmx3g -jar $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar -R $fasta  -T CalculateGenotypePosteriors --supporting $refine -V $input -o $out -L $chr:$start-$end";
+    if ($chr eq 'chrY'){#CalculateGenotypePosteriors chokes on haploid GTs
+        $cmd = "echo 'GCP will not be carried out on chrY'";
+        $out = $input;
+    }
+    print $RECAL <<EOT
+#!/bin/bash
+#\$ -M david.parry\@igmm.ed.ac.uk
+#\$ -m abe
+#\$ -e $recal_script.stderr
+#\$ -o $recal_script.stdout
+#\$ -cwd
+#\$ -V
+#\$ -l h_rt=8:00:00
+#\$ -l h_vmem=8G
+# Configure modules
+. /etc/profile.d/modules.sh
+# Load modules
+module load  igmm/apps/bcbio/20160119
+
+if [ -f $input ]; then
+    $cmd
+else
+    echo "WARN: $input does not exist"
+fi
+
+EOT
+;
+
+close $RECAL; 
+    return ($recal_script, $out);
+}
+
 
 #################################################
 sub makeApplyRecal{
@@ -258,17 +329,22 @@ sub makeApplyRecal{
     my ($chr, $start, $end, $type) = @_;
     my $recal_script = "subscripts/$type"."ApplyRecal_$chr-$start-$end.sh";
     open (my $APPLY, ">", $recal_script) or die "Could not open $recal_script for writing: $!\n";
+    my $suffix = "mnd_lbc";
+    if ($opts{b}){
+        $suffix = "mnd_lbc.valid_samples";
+    }
     my $in;
     my $out;
     if ($type eq 'snp'){
-        $in = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.raw.vcf.gz";
-        $out = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.snpTs99pt9.vcf.gz";
+        $in = "per_chrom/vep.var.$chr-$start-$end.$suffix.raw.vcf.gz";
+        $out = "per_chrom/vep.var.$chr-$start-$end.$suffix.snpTs99pt9.vcf.gz";
     }else{
-        $in  = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.snpTs99pt9.vcf.gz";
-        $out = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.ts99pt9.vcf.gz";
+        $in  = "per_chrom/vep.var.$chr-$start-$end.$suffix.snpTs99pt9.vcf.gz";
+        $out = "per_chrom/vep.var.$chr-$start-$end.$suffix.ts99pt9.vcf.gz";
     }
     my $mode = uc($type); 
     print $APPLY <<EOT
+#!/bin/bash
 #\$ -M david.parry\@igmm.ed.ac.uk
 #\$ -m abe
 #\$ -e $recal_script.stderr
@@ -282,7 +358,11 @@ sub makeApplyRecal{
 # Load modules
 module load  igmm/apps/bcbio/20160119
 
-java -Djava.io.tmpdir=$tmp -Xmx3g -jar $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar -R $fasta -T ApplyRecalibration -input $in -recalFile $out_stub.recalibrate_$mode.recal -tranchesFile  $out_stub.recalibrate_$mode.tranches -mode $mode --ts_filter_level 99.9 -o $out -L $chr:$start-$end
+if [ -f $in ]; then
+    java -Djava.io.tmpdir=$tmp -Xmx3g -jar $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar -R $fasta -T ApplyRecalibration -input $in -recalFile $out_stub.recalibrate_$mode.recal -tranchesFile  $out_stub.recalibrate_$mode.tranches -mode $mode --ts_filter_level 99.9 -o $out -L $chr:$start-$end
+else
+    echo "WARN: $in does not exist"
+fi
 
 EOT
 ;
@@ -303,7 +383,7 @@ sub makeGtScript{
     }
     my $pre_out = "per_chrom/var.$chr-$start-$end.mnd_lbc.raw.vcf.gz";
     my $out = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.raw.vcf.gz";
-    push @out_files, $out;
+    #push @out_files, $out;
     print $GT <<EOT
 #\$ -M david.parry\@igmm.ed.ac.uk
 #\$ -cwd
@@ -326,20 +406,83 @@ EOT
               "-R $fasta ".
               "-D $dbsnp ".
               "-o $pre_out ".
-              "-V " . join(" -V ", @mnd, @$vcfs) . "\n";
-    print $GT "java -Djava.io.tmpdir=$tmp -Xmx24g -jar ".
-              "$ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar ".
-              "-T SelectVariants " .
-              "-R $fasta ".
-              "-xl_sf $lbc_exclude " .
-              "-xl_sf $mnd_exclude " .
-              "-V $pre_out ".
-              "-o $out ".
-              "-env\n";
-    close $GT;
+              "-V " . join(" -V ", @genomic, @$vcfs) . "\n";
+    if ($opts{b}){
+        print $GT "java -Djava.io.tmpdir=$tmp -Xmx24g -jar ".
+                  "$ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar ".
+                  "-T SelectVariants " .
+                  "-R $fasta ".
+                  "-xl_sf $opts{b} " .
+                  "-V $pre_out ".
+                  "-o $out ".
+                  "-env\n";
+        close $GT;
+    }
     return $gt_script;
 }
 
+#################################################
+sub makeVepScript{
+    my ($chr, $start, $end) = @_;
+    my $vep_script = "subscripts/vepVcf$chr-$start-$end.sh";
+    open (my $VEP, ">", $vep_script) or die "Could not open $vep_script for writing: $!\n";
+    my $suffix = "mnd_lbc";
+    if ($opts{b}){
+        $suffix = "mnd_lbc.valid_samples";
+    }
+    my $in = "per_chrom/var.$chr-$start-$end.$suffix.raw.vcf.gz";
+    my $vep_out = "per_chrom/vep.var.$chr-$start-$end.$suffix.raw.vcf";
+    my $out = "$vep_out.gz";
+    push @out_files, $out;
+    my $rdir = "/exports/igmm/eddie/aitman-lab";
+    my $dbnsfp = "$rdir/ref/hg38/dbNSFP_hg38.gz";
+    my $maxent = "$rdir/maxentscan/fordownload/";
+    my $plugins = "$rdir/vep_plugins";
+    my $dbscsnv = "$rdir/ref/hg38/dbscSNV_hg38.txt.gz";
+    print $VEP <<EOT
+#\$ -M david.parry\@igmm.ed.ac.uk
+#\$ -cwd
+#\$ -V
+#\$ -e $vep_script.stderr
+#\$ -o $vep_script.stdout
+#\$ -l h_rt=48:00:00
+#\$ -l h_vmem=32G
+# Configure modules
+. /etc/profile.d/modules.sh
+# Load modules
+module load igmm/apps/tabix/0.2.5
+module load igmm/libs/htslib/1.3
+module load igmm/apps/samtools/1.2
+module load igmm/apps/perl/5.24.0
+module load igmm/apps/vep/84
+
+vep --vcf --offline --everything --buffer_size 200 --check_alleles \\
+--gencode_basic --assembly GRCh38 --force --dir_plugins $plugins \\
+--dir $rdir/ensembl-tools-release-84/scripts/variant_effect_predictor/vep_cache/ \\
+--plugin LoF   --plugin MaxEntScan,$maxent --plugin SpliceConsensus \\
+--plugin dbNSFP,$dbnsfp,Polyphen2_HVAR_pred,Polyphen2_HVAR_rankscore,\\
+LRT_pred,LRT_converted_rankscore,MutationTaster_pred,\\
+MutationTaster_converted_rankscore,MutationAssessor_pred,\\
+MutationAssessor_score_rankscore,FATHMM_pred,FATHMM_converted_rankscore,\\
+PROVEAN_pred,PROVEAN_converted_rankscore,CADD_phred,CADD_raw_rankscore,\\
+DANN_rankscore,DANN_score,MetaSVM_pred,MetaSVM_rankscore,MetaLR_pred,\\
+MetaLR_rankscore,Eigen-phred,Eigen-raw_rankscore,Eigen-PC-raw_rankscore,\\
+fathmm-MKL_coding_pred,fathmm-MKL_coding_rankscore,GERP++_RS_rankscore,\\
+GERP++_RS,phyloP20way_mammalian_rankscore,phyloP20way_mammalian,\\
+phastCons20way_mammalian,phastCons20way_mammalian_rankscore,GTEx_V6_gene,\\
+GTEx_V6_tissue,clinvar_trait,clinvar_clnsig \\
+--plugin dbscSNV,$dbscsnv \\
+-i $in \\
+-o $vep_out
+
+bgzip -f $vep_out
+
+tabix -f -p  vcf $vep_out.gz
+EOT
+    ;
+    close $VEP;
+    return $vep_script;
+}
 #################################################
 sub informUser{
     my $msg = shift;

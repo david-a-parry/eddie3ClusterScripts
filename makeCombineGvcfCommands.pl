@@ -30,6 +30,7 @@ GetOptions(
     "s|split_by_chr",
     "t|tmp_dir=s",
     "v|vcfname=s",
+    "w|wait_ids=s",
 ) or die "Syntax error\n";
 usage() if $opts{h};
 usage("-o/--output_dir option is required.\n") if not $opts{o};
@@ -131,10 +132,11 @@ sub makeGtScript{
     }else{
         $script .= ".sh";
     }
-    $script =~ s/[\:\*]/-/g; #characters not allowed in jobnames
     my $out_vcf = defined ($chr) 
                   ? "$opts{o}/per_chrom/$opts{v}.$chr.$i.g.vcf.gz" 
                   : "$opts{o}/$opts{v}.$i.g.vcf.gz";
+    $script =~ s/[\:\*]/-/g; #characters not allowed in jobnames
+    $out_vcf =~ s/[\:\*]/-/g; #characters can be problematic in catvar command
     open (my $SCRIPT, ">$script") or die "Can't open $script for writing: $!\n";
     print $SCRIPT <<EOT
 #\$ -M david.parry\@igmm.ed.ac.uk
@@ -171,7 +173,10 @@ sub readDict{
     while (my $line = <$DICT>){
        if ($line =~ /^\@SQ\s+.*SN:(\S+)\s+LN:(\d+)\s/){
             #$contigs{$1} = $2;
-            push @chr, $1;
+            my $c = $1;
+            if ($c !~ /decoy/ and $c !~ /^HLA/){
+                push @chr, $c;
+            }
         }
     }
     return @chr;
@@ -204,6 +209,9 @@ OPTIONS:
 
     -q,--qsub
         Use this flag to submit scripts after creation.
+    
+    -w,--wait_ids
+        If using qsub, queue all commands before one or more job IDs (separated with commas).
 
     -g,--gatk FILE
         Location of GATK jar file. Default = $ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar
@@ -212,7 +220,8 @@ OPTIONS:
         Directory to use for tmp files. Defalt = $ENV{HOME}/scratch/tmp/
     
     -f,--fasta FILE
-        Location of reference genome fasta. Default = /exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/seq/hg38.fa
+        Location of reference genome fasta. Default = /exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/seq/hg38.fa
+/exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/seq/hg38.fa
     
     -h,--help
         Show this message and exit.
@@ -246,6 +255,9 @@ sub submit_all_scripts{
         my @wait_ids = (); 
         foreach my $sc (@{$g_scripts{$k}}){
             my $cmd = "qsub $sc";
+            if ($opts{w}){
+                $cmd = "qsub -hold_jid $opts{w} $sc";
+            }
             push @wait_ids, do_qsub($cmd);
         }
         if (exists $join_scripts{$k}){
