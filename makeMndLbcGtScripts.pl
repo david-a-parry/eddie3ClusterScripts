@@ -6,19 +6,26 @@ use Getopt::Long;
 use POSIX qw/ceil strftime/;
 use File::Basename;
 
+my $rdir = "/exports/igmm/eddie/aitman-lab";
+if ($ENV{USER} eq 'clogan2'){
+    $rdir = "/exports/igmm/eddie/mopd";
+}
+my $date = strftime( "%F", localtime );
 my @genomic = ();
 my @per_chrom = ();
 #my @per_chrom = glob '/exports/igmm/eddie/igmm_datastore_MND-WGS/LBC_gvcf/batched_gvcf/*gz';
 #my @mnd = glob '/exports/igmm/eddie//igmm_datastore_MND-WGS/X15030_X0008AT_10094AT_X16084_combined/*gz';
-my %opts = (p => \@per_chrom, g => \@genomic);
+my %opts = (p => \@per_chrom, g => \@genomic, v => "wgs-$date");
 GetOptions
 (
     \%opts,
+    "v|vcf_suffix=s",
     "p|per_chrom=s{,}",
     "g|genomic=s{,}",
     "n|no_exec",
     "b|blacklist_samples=s",
     "a|after_cat",
+    "w|wait=s",  #all commands wait til this is done
 ) or die "error in option spec\n";
 
 my $dummy_wait = 0;
@@ -32,8 +39,8 @@ my $omni = "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg
 my $snps = "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/1000G_phase1.snps.high_confidence.vcf.gz";
 my $dbsnp = "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/dbsnp-147.vcf.gz";
 my $mills = "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/Mills_and_1000G_gold_standard.indels.vcf.gz";
-my $hapmap = "/exports/igmm/eddie/aitman-lab/ref/hg38/hg38bundle/hapmap_3.3.hg38.vcf.gz";
-my $refine = "/exports/igmm/eddie/aitman-lab/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz";
+my $hapmap = "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/hapmap_3.3.vcf.gz",
+my $refine = "$rdir/ref/hg38/1000G_phase3_v4_20130502.snvs_only.hg38liftover.sites.vcf.gz";
  
 #my $lbc_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/lbc_excluded_samples.txt";
 #my $mnd_exclude = "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/joint_genotype_MND_LBC/mnd_excluded_samples.txt";
@@ -80,7 +87,7 @@ my @recal_out   = ();
 my @snp_recal   = ();
 my @indel_recal = ();
 my @geno_recal = ();
-my $out_stub = "var.mnd_lbc";
+my $out_stub = "var.$opts{v}";
 foreach my $c ( 1..22, 'X', 'Y' ) {
     my $chr = "chr$c";
     my @v = map { $batches{$_}->{$chr} } sort keys %batches;
@@ -136,6 +143,9 @@ doQsub($r_cmd);
 ################################################
 sub doQsub{
     my $cmd = shift;
+    if ($opts{w}){
+        $cmd =~ s/qsub/qsub -hold_jid $opts{w}/;
+    }
     informUser("EXECUTING: $cmd");
     return ++$dummy_wait if $opts{n};
     my $stdout = `$cmd`; 
@@ -329,9 +339,9 @@ sub makeApplyRecal{
     my ($chr, $start, $end, $type) = @_;
     my $recal_script = "subscripts/$type"."ApplyRecal_$chr-$start-$end.sh";
     open (my $APPLY, ">", $recal_script) or die "Could not open $recal_script for writing: $!\n";
-    my $suffix = "mnd_lbc";
+    my $suffix = "$opts{v}";
     if ($opts{b}){
-        $suffix = "mnd_lbc.valid_samples";
+        $suffix = "$opts{v}.valid_samples";
     }
     my $in;
     my $out;
@@ -381,8 +391,8 @@ sub makeGtScript{
     # discrepancy between LBC and MND GVCFs at this coordinate
         $exclude_region = ' -XL  chrY:56887903-56887903 ';
     }
-    my $pre_out = "per_chrom/var.$chr-$start-$end.mnd_lbc.raw.vcf.gz";
-    my $out = "per_chrom/var.$chr-$start-$end.mnd_lbc.valid_samples.raw.vcf.gz";
+    my $pre_out = "per_chrom/var.$chr-$start-$end.$opts{v}.raw.vcf.gz";
+    my $out = "per_chrom/var.$chr-$start-$end.$opts{v}.valid_samples.raw.vcf.gz";
     #push @out_files, $out;
     print $GT <<EOT
 #\$ -M david.parry\@igmm.ed.ac.uk
@@ -426,15 +436,14 @@ sub makeVepScript{
     my ($chr, $start, $end) = @_;
     my $vep_script = "subscripts/vepVcf$chr-$start-$end.sh";
     open (my $VEP, ">", $vep_script) or die "Could not open $vep_script for writing: $!\n";
-    my $suffix = "mnd_lbc";
+    my $suffix = $opts{v};
     if ($opts{b}){
-        $suffix = "mnd_lbc.valid_samples";
+        $suffix .= ".valid_samples";
     }
     my $in = "per_chrom/var.$chr-$start-$end.$suffix.raw.vcf.gz";
     my $vep_out = "per_chrom/vep.var.$chr-$start-$end.$suffix.raw.vcf";
     my $out = "$vep_out.gz";
     push @out_files, $out;
-    my $rdir = "/exports/igmm/eddie/aitman-lab";
     my $dbnsfp = "$rdir/ref/hg38/dbNSFP_hg38.gz";
     my $maxent = "$rdir/maxentscan/fordownload/";
     my $plugins = "$rdir/vep_plugins";
@@ -450,13 +459,12 @@ sub makeVepScript{
 # Configure modules
 . /etc/profile.d/modules.sh
 # Load modules
-module load igmm/apps/tabix/0.2.5
 module load igmm/libs/htslib/1.3
 module load igmm/apps/samtools/1.2
 module load igmm/apps/perl/5.24.0
-module load igmm/apps/vep/84
 
-vep --vcf --offline --everything --buffer_size 200 --check_alleles \\
+perl $rdir/ensembl-tools-release-84/scripts/variant_effect_predictor/variant_effect_predictor.pl \\
+--vcf --offline --everything --buffer_size 200 --check_alleles \\
 --gencode_basic --assembly GRCh38 --force --dir_plugins $plugins \\
 --dir $rdir/ensembl-tools-release-84/scripts/variant_effect_predictor/vep_cache/ \\
 --plugin LoF   --plugin MaxEntScan,$maxent --plugin SpliceConsensus \\
