@@ -5,7 +5,7 @@ use File::Basename;
 
 die "Usage: $0 BAM [BAM ...]\n" if @ARGV < 1;
 my $sdir = "lumpy_cmds_scripts";
-my $pre_out = "lumpy_spliiters_discordants";
+my $pre_out = "lumpy_splitters_discordants";
 foreach my $dir ($sdir, $pre_out){
     if (not -d $dir){
         mkdir($dir) or die "Could not create $dir: $!\n";
