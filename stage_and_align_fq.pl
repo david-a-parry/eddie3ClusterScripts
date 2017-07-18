@@ -151,7 +151,7 @@ sub retrieve_files{
 trap 'exit 99' sigusr1 sigusr2 sigterm
 
 # Perform copy with rsync
-rsync --ignore-existing -vr $get $fq_dir
+rsync -vr $get $fq_dir
 chmod -R 700 $fq_dir
 EOT
     ;
@@ -353,7 +353,7 @@ EOT
     ; 
     if ($threads > 1){
         my $mem = ceil(12/$threads) . "G";
-        $head .= "#\$ -pe sharedmem $opts{t}\n#\$ -l h_vmem=$mem";
+        $head .= "#\$ -pe sharedmem $threads\n#\$ -l h_vmem=$mem";
     }else{
         $head .= '#\$ -l h_vmem=12G';
     }
