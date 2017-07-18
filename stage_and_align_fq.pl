@@ -1,303 +1,444 @@
- #!/usr/env perl 
-use strict;
+#!/usr/bin/env perl
 use warnings;
+use strict;
+use FindBin qw($RealBin);
 use File::Basename;
 use Getopt::Long;
-my $align;
-my $sort_and_merge;
-my $indel_realign;
-my $recalibrate;
-my $help;
-my %config;
+use File::Spec;
+use POSIX;
+use Data::Dumper;
+
+my $tmpdir = File::Spec->tmpdir();
+my $gatk = "$RealBin/GATK/GenomeAnalysisTK.jar";
+my $picard = "$RealBin/picard-tools-2.9.0/picard.jar";
+my %opts = (d => \$tmpdir, r => 48, t => 1, g => \$gatk, p => \$picard,
+            b => 10, o => "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/GRCh37",
+            s => 0,
+            );
 GetOptions(
-    \%config,
-    "align",
-    "sort_and_merge",
-    "markduplicates",
-    "indel_realign",
-    "recalibrate",
-    "help",
-) or die "Syntax error!\n";
-usage() if $config{help};
-
-usage("A file list is required!") if @ARGV != 1;
-
-if (not keys %config){
-    for my $o (qw / align sort_and_merge markduplicates indel_realign recalibrate / ){
-        $config{$o}++;
-    }
+    \%opts,
+    'h|?|help',
+    'o|output_dir=s',
+    'b|batch_size=i',
+    'n|no_exec',
+    't|threads=i',
+    's|sort_threads=i',
+    'g|gatk=s',
+    'p|picard=s',
+    'd|tmp_dir=s',
+    'r|runtime=i',
+) or usage("Error in options");
+usage() if $opts{h};
+usage("-o/--output_dir is required") if not $opts{o};
+my $fq_list = shift;
+my %fq = read_fq_list($fq_list);
+die "No fastqs found\n" if not %fq;
+my $refdir = "$RealBin/ref";
+my $human_fasta = "$refdir/GRCh37/hs37d5.fa";
+my $sub_dir = "$RealBin/subscripts";
+my $bam_dir = "$RealBin/alignments";
+my $vcf_dir = "$RealBin/vcf";
+my $gvcf_dir = "$RealBin/gvcf";
+my $fq_dir = "$RealBin/fastq";
+foreach my $d ($bam_dir, $fq_dir, $sub_dir, $gvcf_dir, $vcf_dir){
+    make_dir($d);
 }
-my $file_list = shift;
-my %fastqs = ();
-open (my $FL, $file_list) or die "Can't open $file_list: $!\n";
-while (my $file = <$FL>){
-    chomp($file);
-    my ($sample, $date, $lane, $read); 
-    my ($f, $d) = fileparse($file);
-    if ($f !~ /\.fastq(\.gz)*$/){
-        print STDERR "$d$f does not look like a FASTQ file - skipping.\n";
-        next;
-    }
-    if ($d =~ /Sample_(\w+)([-_]\w+)*/){
-        $sample = $1;
-        $sample .= $2 if $2;
-    }else{
-        print STDERR "WARNING: Couldn't process sample name for $d$f - skipping.\n";
-        next;
-    }
-    if ($d =~ /(\d{6})_\w{5,6}_\w{4}_\w{10}/){
-        $date = $1;
-    }else{
-        print STDERR "WARNING: Couldn't process date for $d$f - skipping.\n";
-        next;
-    }
-    if ($f =~ /\S+_[CTGA]{6}_L(\d{1,3})_R(\d)_\d+/){
-        $lane = $1;
-        $read = $2;
-        #add to hash
-    }else{
-        print STDERR "WARNING: Couldn't process lane and read details for $d$f - skipping.\n";
-        next; 
-    }
-    if (exists $fastqs{$sample}->{$date}->{$lane}->{$read}){
-        die "ERROR: File $d/$f is a duplicate date ($date), lane ($lane), read ($read) and sample ($sample).\n"; 
-    }
-    $fastqs{$sample}->{$date}->{$lane}->{$read} = "$d$f";
-}
-my @scripts = ();
-foreach my $s (sort keys %fastqs){
-    foreach my $d (sort keys %{$fastqs{$s}}){
-        foreach my $l (sort keys %{$fastqs{$s}->{$d}}){
-            my @reads = ();
-            foreach my $r (sort  keys %{$fastqs{$s}->{$d}->{$l}}){
-                push @reads, $fastqs{$s}->{$d}->{$l}->{$r};
-            }
-            if (scalar @reads != 2){
-                die "$s - $d - $l has " . scalar(@reads) . " reads. Need 2! Exiting\n";
-            }
-            my $dir = dirname($reads[0]); 
-            my $bam = "$dir/$s-$d-$l-exome.bam";
-            push @{$fastqs{$s}->{bams}}, $bam;
-            if ($config{align}){
-                if (not -d "alignments"){
-                    mkdir("alignments") or die "Failed to make alignments directory: $!\n";
-                }
-                my $script = "alignments/$s-$d-$l-align.sh";
-                $script = check_exists_and_rename($script);
-                if (-e $bam){
-                    print STDERR "WARNING: $bam BAM file already exists!\n";
-                }
-                open (my $SCRIPT, ">$script") or die "Can't open $script for writing: $!\n";
-                my $rg = "'\@RG\\tID:$s-$d-$l-exome\\tLB:$s-$d\\tSM:$s\\tPL:ILLUMINA'";
-                print $SCRIPT <<EOT
-#\$ -M david.parry\@igmm.ed.ac.uk
-#\$ -m a
-#\$ -m b
-#\$ -m e
-#\$ -cwd
-# Configure modules
-. /etc/profile.d/modules.sh
-# Load modules
-module load apps/gcc/bwa/0.7.12
-module load apps/gcc/samtools/1.2
-bwa mem /export/users/dparry/lustre2/dparry/GRCh37/hs37d5.fa -t 8 -M -R $rg "$reads[0]" "$reads[1]" | samtools view -Sb - > "$bam"
+my %cmds = ();
+my $dummy_wait = 0;
+get_per_sample_cmds();
+exec_cmds();
 
-EOT
-;
-                close $SCRIPT;
-                push @scripts, $script; 
-            }
-        }
+##################################################
+sub get_per_sample_cmds{
+    foreach my $s (keys %fq){
+        push @{$cmds{$s}}, retrieve_files($s);
+        push @{$cmds{$s}}, align_data($s);
+        push @{$cmds{$s}}, make_gvcf($s);
+        push @{$cmds{$s}}, stage_out($s);
     }
 }
 
-#SORT/MERGE
-foreach my $s (sort keys %fastqs){
-    my $sort_cmd = "java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/picard/picard-tools-1.131/picard.jar ";
-    my $out_bam;
-    if (@{$fastqs{$s}->{bams}} > 1){
-        #if we have more than one bam for a sample merge and put in the first
-        #fastq directory
-        my $dir = dirname($fastqs{$s}->{bams}->[0]);
-        $out_bam = "$dir/$s-exome-merged.bam";
-        $sort_cmd .= "MergeSamFiles MSD=TRUE SO=coordinate TMP_DIR=/mnt/lustre2/dparry/tmp/  CREATE_INDEX=TRUE I=\"" 
-                . join("\" I=\"", @{$fastqs{$s}->{bams}})
-                . "\" O=\"$out_bam\""
-            ;
+##################################################
+sub exec_cmds{
+    my @prev_waits = ();
+    foreach my $k (keys %cmds){
+        my $wait = get_wait(\@prev_waits);
+        foreach my $script (@{$cmds{$k}}){
+            $wait = do_qsub($script, $wait);
+        }
+        push @prev_waits, $wait;
+    }
+}
+
+##################################################
+sub get_wait{
+    my $queue = shift;
+    if (@$queue >= $opts{b}){
+        return $queue->[-1 * $opts{b}];
+    }
+    return '';
+}
+
+##################################################
+sub do_qsub{
+    my ($script, $wait_id) = @_;
+    my $cmd = "qsub $script";
+    if ($wait_id){
+        $cmd = "qsub -hold_jid $wait_id $script";
+    }
+    print STDERR "EXECUTING: $cmd\n";
+    return ++$dummy_wait if $opts{n};
+    my $stdout = `$cmd`; 
+    if ($stdout =~ /Your job (\d+) .* has been submitted/){
+        return $1;
     }else{
-        ($out_bam = $fastqs{$s}->{bams}->[0]) =~ s/\.bam$//;
-        $out_bam .= "_sorted.bam";
-        $sort_cmd .= "SortSam SO=coordinate TMP_DIR=/mnt/lustre2/dparry/tmp/ CREATE_INDEX=TRUE I=\"$fastqs{$s}->{bams}->[0]\" O=\"$out_bam\"";
+        die "Error parsing qsub stdout for '$cmd'\nOutput was: $stdout";
     }
-    if ($config{sort_and_merge}){
-        if (not -d "sortmerge"){
-            mkdir("sortmerge") or die "Failed to make sortmerge directory: $!\n";
-        }
-        my $script = "sortmerge/$s-sortmerge.sh";
-        $script = check_exists_and_rename($script);
-        open (my $SCRIPT, ">$script") or die "Can't open $script for writing: $!\n";
-        print $SCRIPT <<EOT
-#\$ -M david.parry\@igmm.ed.ac.uk
-#\$ -m a
-#\$ -m b
-#\$ -m e
+}
+
+
+##################################################
+sub stage_out{
+#copy aligned and processed BAM plus GVCF to --stage_out_dir
+    my $s = shift;
+    my $bam = "$bam_dir/$s.rmdups.indelrealign.bqsr.bam";
+    my $gvcf = "$gvcf_dir/$s.g.vcf.gz";
+    my $script = "$sub_dir/stage_out_$s.sh";
+    open (my $STAGE, ">", $script) or die "Could not write to $script: $!\n";
+    print $STAGE <<EOT
+#!/bin/bash
+#
+#\$ -e $script.stderr
+#\$ -o $script.stdout
 #\$ -cwd
-# Configure modules
-. /etc/profile.d/modules.sh
-# Load modules
-module load apps/gcc/jre/1.7.0_60
-$sort_cmd
+# Choose the staging environment
+#\$ -q staging
+
+# Hard runtime limit
+#\$ -l h_rt=12:00:00 
+
+# Make the job resubmit itself if it runs out of time: rsync will start where it left off
+#\$ -r yes
+#\$ -notify
+trap 'exit 99' sigusr1 sigusr2 sigterm
+
+# Perform copy with rsync
+rsync -vrlp --remove-source-files $bam $gvcf $opts{o}
+
 EOT
-;
-        close $SCRIPT;
-        push @scripts, $script; 
+    ;
+    close $STAGE;
+    return $script;
+}
+    
+##################################################
+sub retrieve_files{
+    my $s = shift;
+    my $stage_in = "$sub_dir/stage_in_$s.sh";
+    my $get = join(" ", map {$fq{$s}->{$_}} sort keys %{$fq{$s}});
+    open (my $STAGE, ">", $stage_in) or die "Could not create $stage_in: $!\n";
+    print $STAGE <<EOT
+#!/bin/bash
+#
+#\$ -e $stage_in.stderr
+#\$ -o $stage_in.stdout
+#\$ -cwd
+#\$ -q staging
+#\$ -l h_rt=12:00:00 
+# Make the job resubmit itself if it runs out of time: rsync will start where it left off
+#\$ -r yes
+#\$ -notify
+trap 'exit 99' sigusr1 sigusr2 sigterm
+
+# Perform copy with rsync
+rsync --ignore-existing -vr $get $fq_dir
+chmod -R 700 $fq_dir
+EOT
+    ;
+    close $STAGE;
+    return $stage_in;
+}
+
+ 
+##################################################
+sub read_fq_list{
+    my $list = shift;
+    open (my $IN, "<", $list) or die "Could not read fastq list $list: $!\n";
+    while (my $l = <$IN>){
+        my ($f) = split(/\s/, $l);
+        my $name = fileparse($f);
+        #files should be named [sample_name]_R1.fastq.gz
+        if ($name =~ /(\S+)_R([12])\.(fastq|fq)(.gz)?$/){
+            my $s = $1;
+            my $r = $2;
+            if (exists $fq{$s}->{$r}){
+                die "ERROR: Duplicate sample/read ($s/$r) for fastq $f\n";
+            }
+            $fq{$s}->{$r} = $f;
+        }
     }
+    return  %fq;
+}
 
-#DEDUP
-    my $in_bam = $out_bam;
-    $out_bam =~ s/\.bam$//;
-    my $metrics_file = "$out_bam" ."_rmupds.metrics";
-    $out_bam .= "_rmdups.bam";
-    if ($config{markduplicates}){
-        if (not -d "rmdups"){
-            mkdir("rmdups") or die "Failed to make rmdups directory: $!\n";
-        }
-        my $script = "rmdups/$s-markdups.sh";
-        $script = check_exists_and_rename($script);
-        open (my $SCRIPT, ">$script") or die "Can't open $script for writing: $!\n";
-        print $SCRIPT <<EOT
-#\$ -M david.parry\@igmm.ed.ac.uk
-#\$ -m a
-#\$ -m b
-#\$ -m e
-#\$ -cwd
-# Configure modules
-. /etc/profile.d/modules.sh
-# Load modules
-module load apps/gcc/jre/1.7.0_60
-java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/picard/picard-tools-1.131/picard.jar MarkDuplicates I="$in_bam" O="$out_bam" M="$metrics_file" CREATE_INDEX=TRUE TMP_DIR=/mnt/lustre2/dparry/tmp/ 
+##################################################
+sub make_gvcf{
+    my ($s) = @_;
+    my $bam = "$bam_dir/$s.rmdups.indelrealign.bqsr.bam";
+    my $gvcf = "$gvcf_dir/$s.g.vcf.gz";
+    my $gt_cmd = <<EOT
+java -Xmx4g -jar $gatk \\
+-R $human_fasta \\
+-T HaplotypeCaller \\
+-D $RealBin/ref/GRCh37/dbSNP147/All_20160601.vcf.gz \\
+-I $bam \\
+-o $gvcf \\
+--emitRefConfidence GVCF 
 EOT
-;
-        close $SCRIPT;
-        push @scripts, $script; 
-    } 
-
-
-#INDELREALIGN
-    $in_bam = $out_bam;
-    (my $stub = $in_bam) =~ s/\.bam$//;
-    my $intervals = $stub . "_indelrealign.intervals";
-    $out_bam = $stub . "_indelrealign.bam";
-    if ($config{indel_realign}){
-        if (not -d "indelrealign"){
-            mkdir("indelrealign") or die "Failed to make indelrealign directory: $!\n";
-        }
-        my $script = "indelrealign/$s-indelrealign.sh";
-        $script = check_exists_and_rename($script);
-        open (my $SCRIPT, ">$script") or die "Can't open $script for writing: $!\n";
-        print $SCRIPT <<EOT
+    ;
+    my $script = "$sub_dir/gvcf.$s.sh";
+    open (my $SCRIPT, ">", $script) or die "Could not create $script: $!\n";
+    print $SCRIPT <<EOT
+#!/bin/bash
 #\$ -M david.parry\@igmm.ed.ac.uk
-#\$ -m a
-#\$ -m b
-#\$ -m e
+#\$ -m abe
+#\$ -e $script.stderr
+#\$ -o $script.stdout
 #\$ -cwd
-# Configure modules
-. /etc/profile.d/modules.sh
-# Load modules
-module load apps/gcc/jre/1.7.0_60
-java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/GATK/GenomeAnalysisTK.jar -T RealignerTargetCreator -R /mnt/lustre2/dparry/GRCh37/hs37d5.fa -known /mnt/lustre2/dparry/GRCh37/GATK_resource_bundle/1000G_phase1.indels.b37.vcf -known /mnt/lustre2/dparry/GRCh37/GATK_resource_bundle/Mills_and_1000G_gold_standard.indels.b37.vcf -I $in_bam -o "$intervals"
-java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/GATK/GenomeAnalysisTK.jar -T IndelRealigner -R /mnt/lustre2/dparry/GRCh37/hs37d5.fa -known /mnt/lustre2/dparry/GRCh37/GATK_resource_bundle/1000G_phase1.indels.b37.vcf -known /mnt/lustre2/dparry/GRCh37/GATK_resource_bundle/Mills_and_1000G_gold_standard.indels.b37.vcf -targetIntervals "$intervals" -o "$out_bam"
-EOT
-;
-        close $SCRIPT;
-        push @scripts, $script; 
-    }    
-                
-#BQSR           
-    $in_bam = $out_bam;
-    ($stub = $in_bam) =~ s/\.bam$//;
-    my $grp = $stub . "_bqsr.grp";
-    my $postrecal = $stub . "_bqsr_postrecal.grp";
-    my $plots = $stub . "_bqsr_postrecal.plots.pdf";
-    $out_bam = $stub . "_bqsr.bam";
-    if ($config{recalibrate}){
-        if (not -d "recal"){
-            mkdir("recal") or die "Failed to make recal directory: $!\n";
-        }
-        my $script = "recal/$s-recalibration.sh";
-        $script = check_exists_and_rename($script);
-        open (my $SCRIPT, ">$script") or die "Can't open $script for writing: $!\n";
-        print $SCRIPT <<EOT
-#\$ -M david.parry\@igmm.ed.ac.uk
-#\$ -m a
-#\$ -m b
-#\$ -m e
 #\$ -V
-#\$ -cwd
-# Configure modules
-. /etc/profile.d/modules.sh
-# Load modules
-module load apps/gcc/jre/1.7.0_60
-module load apps/gcc/R/3.1.0
-#get recalibration model
-java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/GATK/GenomeAnalysisTK.jar -T BaseRecalibrator -R /mnt/lustre2/dparry/GRCh37/hs37d5.fa -knownSites /mnt/lustre2/dparry/GRCh37/dbSNP142/00-All.vcf.gz -knownSites /mnt/lustre2/dparry/GRCh37/GATK_resource_bundle/1000G_phase1.indels.b37.vcf -knownSites /mnt/lustre2/dparry/GRCh37/GATK_resource_bundle/Mills_and_1000G_gold_standard.indels.b37.vcf -I "$in_bam" -o "$grp"
-#apply recalibration model
-java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/GATK/GenomeAnalysisTK.jar -T PrintReads -R /mnt/lustre2/dparry/GRCh37/hs37d5.fa -I "$in_bam" -o "$out_bam" -BQSR "$grp"
-#check recalibration model
-java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/GATK/GenomeAnalysisTK.jar -T BaseRecalibrator -R /mnt/lustre2/dparry/GRCh37/hs37d5.fa -knownSites /mnt/lustre2/dparry/GRCh37/dbSNP142/00-All.vcf.gz -knownSites /mnt/lustre2/dparry/GRCh37/GATK_resource_bundle/1000G_phase1.indels.b37.vcf -knownSites /mnt/lustre2/dparry/GRCh37/GATK_resource_bundle/Mills_and_1000G_gold_standard.indels.b37.vcf -I "$in_bam" -BQSR "$grp" -o "$postrecal"
-#produce plots
-java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/GATK/GenomeAnalysisTK.jar -T AnalyzeCovariates -R /mnt/lustre2/dparry/GRCh37/hs37d5.fa -before "$grp" -after "$postrecal" -plots "$plots"
+#\$ -l h_vmem=12G
+#\$ -l h_rt=$opts{r}:00:00 
+. /etc/profile.d/modules.sh 
+
+$gt_cmd
+
 EOT
-;
-        close $SCRIPT;
-        push @scripts, $script; 
-    }    
-
+    ;
+    close $SCRIPT;
+    return $script;
 }
-print STDERR "Created following scripts:\n" . join("\n", @scripts) ."\n";
 
-##################################################################################
-sub check_exists_and_rename{
-    my $f = shift;
-    if (-e $f){
-        (my $newname = $f) =~ s/(\.\w+)$//;
-        my $ext = $1;
-        $newname = $f if not $newname;
-        my $add = 1;
-        if ($newname =~ /_(\d+)$/){
-            $add = $1 + 1;
-            $newname =~ s/_(\d+)$//;
-        }
-        $newname .= "_$add";
-        $newname .= "$ext" if $ext;
-        return check_exists_and_rename($newname);
+##################################################
+sub align_data{
+    #align to the human GRCh37 genome using standard bwa/GATK pipeline
+    my ($s) = @_;
+    my $bam_base = "$bam_dir/$s";
+    my $fqs = join(" \\\n", map {$fq_dir . "/" . basename($fq{$s}->{$_})} 
+                   sort keys %{$fq{$s}});
+    my @cmds = ();
+    push @cmds, <<EOT
+bwa mem -t $opts{t} \\
+-R '\@RG\\tID:$s\\tSM:$s\\tLB:$s\\tPL:ILLUMINA' \\
+"$human_fasta" \\
+$fqs \\
+ | samtools sort -@ $opts{s} -O bam -T $bam_base.tmp_sort -o $bam_base.bam -
+EOT
+    ;
+    push @cmds, <<EOT
+java -Djava.io.tmpdir=$tmpdir \\
+-Xmx4g \\
+-jar $picard \\
+MarkDuplicates \\
+I=$bam_base.bam \\
+O=$bam_base.rmdups.bam \\
+M=$bam_base.rmdups.metrics \\
+CREATE_INDEX=TRUE \\
+TMP_DIR=$tmpdir 
+
+rm $bam_base.bam
+
+EOT
+    ;
+    push @cmds, <<EOT
+java -Djava.io.tmpdir=$tmpdir \\
+-Xmx4g \\
+-jar $gatk \\
+-T RealignerTargetCreator \\
+-R $human_fasta \\
+-known $RealBin/ref/GRCh37/GATK_resource_bundle/1000G_phase1.indels.b37.vcf.gz \\
+-known $RealBin/ref/GRCh37/GATK_resource_bundle/Mills_and_1000G_gold_standard.indels.b37.vcf.gz \\
+-I $bam_base.rmdups.bam \\
+-o $bam_base.rmdups.indelrealign.intervals \\
+-nt $opts{t}
+
+EOT
+    ;
+    push @cmds, <<EOT
+java -Djava.io.tmpdir=$tmpdir \\
+-Xmx4g \\
+-jar $gatk \\
+-T IndelRealigner \\
+-R $human_fasta \\
+-known $RealBin/ref/GRCh37/GATK_resource_bundle/1000G_phase1.indels.b37.vcf.gz \\
+-known $RealBin/ref/GRCh37/GATK_resource_bundle/Mills_and_1000G_gold_standard.indels.b37.vcf.gz \\
+-I $bam_base.rmdups.bam \\
+-targetIntervals $bam_base.rmdups.indelrealign.intervals \\
+-o $bam_base.rmdups.indelrealign.bam
+
+rm $bam_base.rmdups.bam 
+
+EOT
+    ;
+    push @cmds, <<EOT
+java -Djava.io.tmpdir=$tmpdir \\
+-Xmx4g \\
+-jar $gatk \\
+-T BaseRecalibrator \\
+-R $human_fasta \\
+-knownSites $RealBin/ref/GRCh37/dbSNP147/All_20160601.vcf.gz \\
+-knownSites $RealBin/ref/GRCh37/GATK_resource_bundle/1000G_phase1.indels.b37.vcf.gz \\
+-knownSites $RealBin/ref/GRCh37/GATK_resource_bundle/Mills_and_1000G_gold_standard.indels.b37.vcf.gz \\
+-I $bam_base.rmdups.indelrealign.bam \\
+-o $bam_base.rmdups.indelrealign.bqsr.grp \\
+-nct $opts{t}
+
+java -Djava.io.tmpdir=$tmpdir \\
+-Xmx4g \\
+-jar $gatk \\
+-T PrintReads \\
+-R $human_fasta \\
+-I $bam_base.rmdups.indelrealign.bam \\
+-o $bam_base.rmdups.indelrealign.bqsr.bam \\
+-BQSR $bam_base.rmdups.indelrealign.bqsr.grp \\
+-nct $opts{t}
+    
+EOT
+    ;
+    push @cmds, <<EOT
+java -Djava.io.tmpdir=$tmpdir \\
+-Xmx4g \\
+-jar $gatk \\
+-T BaseRecalibrator \\
+-R $human_fasta \\
+-knownSites $RealBin/ref/GRCh37/dbSNP147/All_20160601.vcf.gz \\
+-knownSites $RealBin/ref/GRCh37/GATK_resource_bundle/1000G_phase1.indels.b37.vcf.gz \\
+-knownSites $RealBin/ref/GRCh37/GATK_resource_bundle/Mills_and_1000G_gold_standard.indels.b37.vcf.gz \\
+-I $bam_base.rmdups.indelrealign.bam \\
+-o $bam_base.rmdups.indelrealign.bqsr.post_recal.grp \\
+-BQSR $bam_base.rmdups.indelrealign.bqsr.grp \\
+-nct $opts{t}
+
+rm $bam_base.rmdups.indelrealign.bam
+
+EOT
+    ;
+    my @threads = ($opts{t} + $opts{s}, 1, $opts{t}, 1, $opts{t}, $opts{t});
+    my @names = map {"$_.$s"} qw /  align 
+                                    dedup 
+                                    realign_target 
+                                    indelrealign 
+                                    bqsr 
+                                    post_bqsr/;
+    my @scripts = ();
+    for (my $i = 0; $i < @cmds; $i++){
+        push @scripts, make_bam_script($names[$i], $cmds[$i], $threads[$i]);
     }
-    return $f;
+    return @scripts;
 }
 
-##################################################################################
-sub usage{
-    my $msg = shift; 
-    print "ERROR: $msg\n" if $msg;
-    print <<EOT
-    
-    USAGE: perl $0 fastq_list.txt [options]
-    
-    From a list of FASTQs this script will create a series of qsub scripts to perform alignment and post-processing.
+##################################################
+sub make_bam_script{
+    my ($name, $cmd, $threads) = @_;
+    my $script = "$sub_dir/$name.sh";
+    open (my $SCRIPT, ">", $script) or die "Could not create $script: $!\n";
+    my $head = <<EOT
+#!/bin/bash
+#\$ -M david.parry\@igmm.ed.ac.uk
+#\$ -m abe
+#\$ -e $script.stderr
+#\$ -o $script.stdout
+#\$ -cwd
+#\$ -V
+#\$ -l h_rt=$opts{r}:00:00 
+EOT
+    ; 
+    if ($threads > 1){
+        my $mem = ceil(12/$threads) . "G";
+        $head .= "#\$ -pe sharedmem $opts{t}\n#\$ -l h_vmem=$mem";
+    }else{
+        $head .= '#\$ -l h_vmem=12G';
+    }
+    print $SCRIPT <<EOT
+$head
+. /etc/profile.d/modules.sh 
+module load igmm/apps/bwa/0.7.12-r1039
+module load igmm/libs/ncurses/6.0
+module load igmm/libs/htslib/1.4
+module load igmm/apps/samtools/1.4
 
-    Individual steps can be selected using the options below, but note that the preceding step (in the order below) must have already been run and the relevant input bam file must exist.
+#bail on first error, unset error, return code of any failed command
+set -euo pipefail 
 
-    OPTIONS: 
-
-    -a    --align           [create alignment scripts only]
-    -s    --sort_and_merge  [create Picard's SortSam or MergeSam scripts (bams from same samples will be merged) only]
-    -i    --indel_realign   [create GATK indel realignment scripts only]
-    -m    --markduplicates  [create Picard's MarkDuplicates scripts only]
-    -r    --recalibrate     [create GATK BQSR scripts only]
-    -h    --help            [show this help message and exit]
+$cmd
 
 EOT
-;
-    exit 1 if $msg;
+    ;
+    close $SCRIPT;
+    return $script;
+}
+
+##################################################
+sub make_dir{
+    my $dir = shift;
+    if (not -d $dir){
+        mkdir ($dir) or die "Could not create directory '$dir': $!\n";
+    }
+}
+
+##################################################
+sub usage{
+    my $msg = shift;
+    print STDERR "$msg\n" if $msg;
+    print <<EOT
+
+USAGE: $0 [options] FQLIST
+
+OPTIONS:
+    
+    FQLIST - A list of FASTQ files (named in the format sample_name.fastq(.gz)
+             to process. Required.
+
+    -o STORE --out_dir STORE
+        Directory to place final BAM and GVCF files. 
+        Default=/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/GRCh37
+
+    -b N_PER_BATCH --batch_size N_PER_BATCH
+        Number of samples to process in parallel.
+
+    -n --no_exec
+        Perform a dry run. This will create qsub scripts and do a 'mock' qsub,
+        but will not submit any jobs. 
+
+    -t THREADS --threads THREADS
+        Number of threads to use for multithreaded commands (i.e. bwa and 
+        supporting GATK commands). Default = 1.
+
+    -s SORT_THREADS --sort_threads SORT_THREADS
+        Number of additional threads to use for samtools sort (piped from bwa).
+        Default = 0.
+
+    -r RUNTIME --runtime RUNTIME
+        Number of hours runtime to give each script. Must be a whole number.
+        Default = 48.
+
+    -d TMPDIR   --tmp_dir TMPDIR
+        Location of directory to use for temporary files. Defaults to the 
+        system default TMPDIR.
+
+    -g GATK.jar --gatk GATK.jar
+        Location of GATK jar file to use. 
+        Default = $RealBin/GATK/GenomeAnalysisTK.jar
+
+    -p picard.jar --gatk picard.jar
+        Location of picard jar file to use. 
+        Default = $RealBin/picard-tools-2.9.0/picard.jar
+
+    -h --help
+        Show this message and exit.
+
+EOT
+    ;
+    exit 2 if $msg;
     exit;
 }
+
+
