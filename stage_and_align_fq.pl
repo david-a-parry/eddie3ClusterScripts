@@ -13,7 +13,6 @@ my $gatk = "$RealBin/GATK/GenomeAnalysisTK.jar";
 my $picard = "$RealBin/picard-tools-2.9.0/picard.jar";
 my %opts = (d => \$tmpdir, r => 48, t => 1, g => \$gatk, p => \$picard,
             b => 10, o => "/gpfs/igmmfs01/eddie/igmm_datastore_MND-WGS/GRCh37",
-            s => 0,
             );
 GetOptions(
     \%opts,
@@ -22,7 +21,6 @@ GetOptions(
     'b|batch_size=i',
     'n|no_exec',
     't|threads=i',
-    's|sort_threads=i',
     'g|gatk=s',
     'p|picard=s',
     'd|tmp_dir=s',
@@ -151,7 +149,7 @@ sub retrieve_files{
 trap 'exit 99' sigusr1 sigusr2 sigterm
 
 # Perform copy with rsync
-rsync -vr $get $fq_dir
+rsync --ignore-existing -vr $get $fq_dir
 chmod -R 700 $fq_dir
 EOT
     ;
@@ -230,7 +228,11 @@ bwa mem -t $opts{t} \\
 -R '\@RG\\tID:$s\\tSM:$s\\tLB:$s\\tPL:ILLUMINA' \\
 "$human_fasta" \\
 $fqs \\
- | samtools sort -@ $opts{s} -O bam -T $bam_base.tmp_sort -o $bam_base.bam -
+ | samtools view -Sb - > $bam_base.unsorted.bam
+
+samtools sort -@ $opts{t} -O bam -T $bam_base.tmp_sort -o $bam_base.bam $bam_base.unsorted.bam
+
+rm $bam_base.unsorted.bam
 EOT
     ;
     push @cmds, <<EOT
@@ -321,7 +323,7 @@ rm $bam_base.rmdups.indelrealign.bam
 
 EOT
     ;
-    my @threads = ($opts{t} + $opts{s}, 1, $opts{t}, 1, $opts{t}, $opts{t});
+    my @threads = ($opts{t} , 1, $opts{t}, 1, $opts{t}, $opts{t});
     my @names = map {"$_.$s"} qw /  align 
                                     dedup 
                                     realign_target 
@@ -411,10 +413,6 @@ OPTIONS:
     -t THREADS --threads THREADS
         Number of threads to use for multithreaded commands (i.e. bwa and 
         supporting GATK commands). Default = 1.
-
-    -s SORT_THREADS --sort_threads SORT_THREADS
-        Number of additional threads to use for samtools sort (piped from bwa).
-        Default = 0.
 
     -r RUNTIME --runtime RUNTIME
         Number of hours runtime to give each script. Must be a whole number.
