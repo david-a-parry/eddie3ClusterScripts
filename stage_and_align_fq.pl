@@ -232,6 +232,8 @@ bwa mem -t $opts{t} \\
 "$human_fasta" \\
 $fqs \\
  | samtools view -Sb - > $bam_base.unsorted.bam
+
+rm $fqs
 EOT
     ;
     push @cmds, <<EOT
