@@ -224,36 +224,36 @@ sub align_data{
                    sort keys %{$fq{$s}});
     my @cmds = ();
     push @cmds, <<EOT
+ulimit -n 2048
+echo "ulimit file limit set to " \$(ulimit -n)
+
 bwa mem -t $opts{t} \\
 -R '\@RG\\tID:$s\\tSM:$s\\tLB:$s\\tPL:ILLUMINA' \\
 "$human_fasta" \\
 $fqs \\
  | samtools view -Sb - > $bam_base.unsorted.bam
+EOT
+    ;
+    push @cmds, <<EOT
+ulimit -n 2048
+echo "ulimit file limit set to " \$(ulimit -n)
 
-#samtools sort seems to bork after 1024 tmp files created - will try picard sort
-#in next script instead
-#samtools sort -@ $opts{t} -O bam -T $bam_base.tmp_sort -o $bam_base.bam $bam_base.unsorted.bam
-#rm $bam_base.unsorted.bam
+samtools sort -@ $opts{t} -O bam -T $bam_base.tmp_sort -o $bam_base.bam $bam_base.unsorted.bam
+rm $bam_base.unsorted.bam
 EOT
     ;
     push @cmds, <<EOT
 java -Djava.io.tmpdir=$tmpdir \\
 -Xmx4g \\
 -jar $picard \\
-SortSam \\
-O=/dev/stdout \\
-I=$bam_base.unsorted.bam | \\
-java -Djava.io.tmpdir=$tmpdir \\
--Xmx4g \\
--jar $picard \\
 MarkDuplicates \\
-I=/dev/stdin \\
+I=$bam_base.bam \\
 O=$bam_base.rmdups.bam \\
 M=$bam_base.rmdups.metrics \\
 CREATE_INDEX=TRUE \\
 TMP_DIR=$tmpdir 
 
-rm $bam_base.unsorted.bam
+rm $bam_base.bam
 
 EOT
     ;
@@ -330,8 +330,9 @@ rm $bam_base.rmdups.indelrealign.bam
 
 EOT
     ;
-    my @threads = ($opts{t} , $opts{t}, $opts{t}, 1, $opts{t}, $opts{t});
+    my @threads = ($opts{t} , $opts{t}, $opts{t}, $opts{t}, 1, $opts{t}, $opts{t});
     my @names = map {"$_.$s"} qw /  align 
+                                    sort 
                                     dedup 
                                     realign_target 
                                     indelrealign 
@@ -364,7 +365,7 @@ EOT
         my $mem = ceil(12/$threads) . "G";
         $head .= "#\$ -pe sharedmem $threads\n#\$ -l h_vmem=$mem";
     }else{
-        $head .= '#\$ -l h_vmem=12G';
+        $head .= "#\$ -l h_vmem=12G";
     }
     print $SCRIPT <<EOT
 $head
