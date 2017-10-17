@@ -35,7 +35,7 @@ GetOptions(
 usage() if $opts{h};
 usage("-o/--output_dir option is required.\n") if not $opts{o};
 usage("-i/--gvcfs option is required.\n") if not @gvcfs;
-usage("-n/--increment option is must be greater than 0.\n") if $opts{n} < 1;
+usage("-n/--increment option must be greater than 0.\n") if $opts{n} < 1;
 
 @gvcfs = map { "\"$_\"" } @gvcfs; 
 if (not -d $opts{o}){ 
@@ -221,7 +221,6 @@ OPTIONS:
     
     -f,--fasta FILE
         Location of reference genome fasta. Default = /exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/seq/hg38.fa
-/exports/igmm/software/pkg/el7/apps/bcbio/share/bcbio-nextgen/genomes/Hsapiens/hg38/seq/hg38.fa
     
     -h,--help
         Show this message and exit.
