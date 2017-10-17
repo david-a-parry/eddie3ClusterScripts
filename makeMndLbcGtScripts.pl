@@ -24,6 +24,7 @@ GetOptions
     "g|genomic=s{,}",
     "n|no_exec",
     "b|blacklist_samples=s",
+    "t|target_sites=s",
     "a|after_cat",
     "w|wait=s",  #all commands wait til this is done
 ) or die "error in option spec\n";
@@ -382,6 +383,25 @@ close $APPLY;
 }
 
 #################################################
+sub getTargetSitesExcluseSites{
+    my ($chr, $start, $end) = @_;
+    my @exclude = ();
+    if ($start > 1){
+        push @exclude, "$chr:1-" . ($start - 1) ;
+    }
+    if ($end < $contigs{$chr}){
+        push @exclude, "$chr:" . ($end + 1) . "-$contigs{$chr}";
+    }
+    foreach my $c ( 1..22, 'X', 'Y' ) {
+        my $x_chr = "chr$c";
+        if ($x_chr ne $chr){
+            push @exclude, $x_chr;
+        }
+    }
+    return "-XL " . join(" -XL ", @exclude);
+}
+
+#################################################
 sub makeGtScript{
     my ($chr, $start, $end, $vcfs) = @_;
     my $gt_script = "subscripts/gtGvcf$chr-$start-$end.sh";
@@ -391,6 +411,12 @@ sub makeGtScript{
     # discrepancy between LBC and MND GVCFs at this coordinate
         $exclude_region = ' -XL  chrY:56887903-56887903 ';
     }
+    my $interval = "-L $chr:$start-$end " ;
+    if ($opts{t}){
+        $interval = getTargetSitesExcluseSites($chr, $start, $end);
+        $interval .= " -allSites -L $opts{t} ";
+    }
+        
     my $pre_out = "per_chrom/var.$chr-$start-$end.$opts{v}.raw.vcf.gz";
     my $out = "per_chrom/var.$chr-$start-$end.$opts{v}.valid_samples.raw.vcf.gz";
     #push @out_files, $out;
@@ -411,8 +437,8 @@ EOT
     print $GT "java -Djava.io.tmpdir=$tmp -Xmx24g -jar ".
               "$ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar ".
               "-T GenotypeGVCFs -stand_call_conf 30 -stand_emit_conf 10 ".
-              "-L $chr:$start-$end " . 
               $exclude_region .
+              $interval .
               "-R $fasta ".
               "-D $dbsnp ".
               "-o $pre_out ".
