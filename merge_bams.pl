@@ -26,10 +26,12 @@ print <<EOT
 #\$ -m b
 #\$ -m e
 #\$ -cwd
+#\$ -V
+#\$ -l h_vmem=14G
 # Configure modules
 . /etc/profile.d/modules.sh
 # Load modules
-module load apps/gcc/jre/1.7.0_60
+#
 EOT
 ;
 
@@ -47,7 +49,7 @@ sub merge_files{
     next if not @$f;
     $merge_no++;
     my $out_bam = "$out_prefix-$merge_no.bam";
-    my $merge_cmd = "java -Djava.io.tmpdir=/mnt/lustre2/dparry/tmp/ -Xmx4g -jar /export/users/dparry/picard/picard-tools-1.131/picard.jar MergeSamFiles MSD=TRUE SO=coordinate TMP_DIR=/mnt/lustre2/dparry/tmp/  CREATE_INDEX=TRUE I=\""
+    my $merge_cmd = "java -Djava.io.tmpdir=$ENV{HOME}/scratch/tmp/ -Xmx8g -jar $ENV{HOME}/picard-tools-2.5.0/picard.jar MergeSamFiles MSD=TRUE SO=coordinate TMP_DIR=$ENV{HOME}/scratch/tmp/  CREATE_INDEX=TRUE I=\""
     . join("\" I=\"", @$f)   
     . "\" O=\"$out_bam\""  
     ;
