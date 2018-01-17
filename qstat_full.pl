@@ -3,7 +3,7 @@
 use strict;
 use warnings; 
 use Getopt::Long;
-
+Getopt::Long::Configure ("bundling");
 my %opts = (d => 30);
 GetOptions
 (
