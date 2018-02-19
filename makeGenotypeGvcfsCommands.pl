@@ -19,7 +19,7 @@ my %opts =
     f => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/seq/hg38.fa",
     d => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/seq/hg38.dict",
     t => "$ENV{HOME}/scratch/tmp/",
-    g => "$ENV{HOME}/GATK/v3.6/GenomeAnalysisTK.jar", 
+    g => "$ENV{HOME}/GATK/v3.8/GenomeAnalysisTK.jar", 
     omni => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/1000G_omni2.5.vcf.gz",
     s => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/1000G_phase1.snps.high_confidence.vcf.gz",
     dbsnp => "/exports/igmm/software/pkg/el7/apps/bcbio/share2/genomes/Hsapiens/hg38/variation/dbsnp-147.vcf.gz",
@@ -37,7 +37,7 @@ GetOptions(
     "d|dict=s",
     "e|emit_conf=i",
     "f|fasta=s",
-    "g|gatk",
+    "g|gatk=s",
     "h|help",
     "hapmap=s",
     "i|gvcfs=s{,}",
@@ -51,6 +51,7 @@ GetOptions(
     "s|phase1_snps=s",
     "t|tmp_dir=s",
     "v|vcfname=s",
+    "x|main_chromosomes_only",
 ) or die "Syntax error\n";
 usage() if $opts{h};
 usage("-d/--dict option is required.\n") if not $opts{d};
@@ -61,7 +62,11 @@ open (my $DICT, $opts{d}) or die "Can't open $opts{d} for reading: $!\n";
 my @contigs = (); 
 while (my $line = <$DICT>){
    if ($line =~ /^\@SQ\s+.*SN:(\S+)/){
-        push @contigs, $1;
+        my $c = $1;
+        if ($opts{x} and $c !~ /^(chr)?[0-9]?[0-9XYM]$/){
+            next;
+        }
+        push @contigs, $c;
     }
 }
 die "No contigs found in $opts{d}!\n" if not @contigs;
@@ -76,9 +81,9 @@ my @g_scripts = ();
 my @c_vcfs = ();
 foreach my $chr (@contigs){
     next if $chr =~ /_decoy$/; #skip decoy chromosomes
-    my $script = "$opts{o}/subscripts/genotypeGvcfs$chr.sh";
+    my $script = "$opts{o}/subscripts/genotypeGvcfs-$opts{v}-$chr.sh";
     $script =~ s/[\:\*]/-/g; #characters not allowed in jobnames
-    my $chrom_vcf = "$opts{o}/per_chrom/var.hc.$chr.$opts{v}.raw.vcf.gz";
+    my $chrom_vcf = "$opts{o}/per_chrom/var.$chr.$opts{v}.raw.vcf.gz";
     $chrom_vcf =~ s/[\:\*]/-/g;
     open (my $SCRIPT, ">$script") or die "Can't open $script for writing: $!\n";
     print $SCRIPT <<EOT
@@ -102,7 +107,7 @@ EOT
     push @c_vcfs, $chrom_vcf;
 }
 
-my $recal_script = "$opts{o}/subscripts/join_and_recal.sh";
+my $recal_script = "$opts{o}/subscripts/join_and_recal-$opts{v}.sh";
 open (my $SCRIPT, ">$recal_script") or die "Can't open $recal_script for writing: $!\n";
 my $join_string = " -V "  . join(" -V ", @c_vcfs); 
 my $pedstring = ''; 
@@ -225,6 +230,10 @@ OPTIONS:
 
     -n,--no_gcp
         Use this flag to skip the GATK CalculateGenotypePosteriors step.
+
+    -x,--main_chromosomes_only
+        Only do main autosomes and sex chromosomes - ignore haplotype contigs,
+        unplaced contigs and decoy contigs.
 
     -h,--help
         Show this message and exit.
