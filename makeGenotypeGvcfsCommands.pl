@@ -129,6 +129,8 @@ print $SCRIPT <<EOT
 # Load modules
 module load  igmm/apps/bcbio/20160119
 
+set -euo pipefail 
+
 java -Djava.io.tmpdir=$opts{t} -Xmx8G -cp $opts{g} org.broadinstitute.gatk.tools.CatVariants  -R $opts{f} --assumeSorted -out $opts{o}/var.$opts{v}.raw.vcf.gz $join_string 
 
 java -Djava.io.tmpdir=$opts{t} -Xmx8G -jar $opts{g} -R $opts{f} -T VariantRecalibrator -resource:hapmap,known=false,training=true,truth=true,prior=15.0 $opts{hapmap} -resource:omni,known=false,training=true,truth=true,prior=12.0 $opts{omni} -resource:1000G,known=false,training=true,truth=false,prior=10.0 $opts{s} -resource:dbsnp,known=true,training=false,truth=false,prior=2.0 $opts{dbsnp} -an DP -an QD -an FS -an SOR -an MQ -an MQRankSum -an ReadPosRankSum -mode SNP -tranche 100.0 -tranche 99.95 -tranche 99.9 -tranche 99.0 -tranche 95.0 -tranche 90.0  -input $opts{o}/var.$opts{v}.raw.vcf.gz -recalFile $opts{o}/var.$opts{v}.recalibrate_SNP.recal -tranchesFile  $opts{o}/var.$opts{v}.recalibrate_SNP.tranches -rscriptFile $opts{o}/var.$opts{v}.recalibrate_SNP.plots.R
