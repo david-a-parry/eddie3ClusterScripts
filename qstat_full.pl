@@ -28,7 +28,7 @@ my %indices = ();
 #cols are different lengths separated by spaces
 #in order to detect empty cols we need to know where to look
 
-my @info = ("job-ID", "prior", "name", "user", "state", "submit/start at", "queue", "slots", "fullname" ) ;
+my @info = ("job-ID", "prior", "name", "user", "state", "submit/start at", "queue", "slots", "ja-task-ID", "fullname" ) ;
 my @widths = map { length($info[$_]) } 0..$#info;
 my %current_jobs = (); 
 my @job_strings = ();
