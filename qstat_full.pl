@@ -137,6 +137,9 @@ sub usage{
 
     qstat_full.pl - prints qstat output including full name of job in columns
 
+    Usage:
+            qstat_full.pl [options]
+
     Options:
 
         -h,--help
